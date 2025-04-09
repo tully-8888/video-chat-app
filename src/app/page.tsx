@@ -186,13 +186,13 @@ export default function Home() {
              <strong>Error:</strong> {error}
           </p>
       )}
-      <p style={{ textAlign: 'center', marginBottom: '20px', fontSize: '0.9em', color: '#6c757d' }}>
+      <p style={{ textAlign: 'center', marginBottom: '20px', fontSize: '0.9em', color: 'var(--foreground-muted, #888888)' }}>
         WebSocket Status: <span style={{ fontWeight: 'bold' }}>{webSocketState}</span>
       </p>
       
       {!isJoined ? (
-        <div style={{ marginBottom: '20px', padding: '20px', border: '1px solid #ddd', borderRadius: '8px', backgroundColor: '#f8f9fa' }}>
-          <h2 style={{ marginTop: '0', marginBottom: '15px' }}>Join a Room</h2>
+        <div style={{ marginBottom: '20px', padding: '20px', border: '1px solid var(--border, #333)', borderRadius: '8px', backgroundColor: 'var(--background-secondary, #222)' }}>
+          <h2 style={{ marginTop: '0', marginBottom: '15px', color: 'var(--foreground, #EAEAEA)' }}>Join a Room</h2>
           <div style={{ display: 'flex', gap: '10px', marginBottom: '15px' }}>
              <input
                type="text"
@@ -200,7 +200,7 @@ export default function Home() {
                value={roomId}
                onChange={(e) => setRoomId(e.target.value)}
                disabled={isJoining}
-               style={{ padding: '10px', border: '1px solid #ccc', borderRadius: '4px', flexGrow: 1 }}
+               style={{ padding: '10px', border: '1px solid var(--border, #333)', borderRadius: '4px', flexGrow: 1, backgroundColor: 'var(--background-input, #333)', color: 'var(--foreground, #EAEAEA)' }}
              />
              <input
                type="text"
@@ -208,7 +208,7 @@ export default function Home() {
                value={userId}
                onChange={(e) => setUserId(e.target.value)}
                disabled={isJoining}
-               style={{ padding: '10px', border: '1px solid #ccc', borderRadius: '4px', flexGrow: 1 }}
+               style={{ padding: '10px', border: '1px solid var(--border, #333)', borderRadius: '4px', flexGrow: 1, backgroundColor: 'var(--background-input, #333)', color: 'var(--foreground, #EAEAEA)' }}
              />
           </div>
           <button 
@@ -217,8 +217,8 @@ export default function Home() {
             style={{ 
                 padding: '10px 20px', 
                 cursor: (webSocketState !== 'OPEN' || isJoining) ? 'not-allowed' : 'pointer',
-                backgroundColor: (webSocketState !== 'OPEN' || isJoining) ? '#ccc' : '#007bff',
-                color: 'white',
+                backgroundColor: (webSocketState !== 'OPEN' || isJoining) ? 'var(--background-disabled, #555)' : 'var(--accent, #3b82f6)',
+                color: (webSocketState !== 'OPEN' || isJoining) ? 'var(--foreground-muted, #999)' : 'white',
                 border: 'none',
                 borderRadius: '4px',
                 fontSize: '1em' 
@@ -226,20 +226,21 @@ export default function Home() {
           >
             {isJoining ? 'Joining...' : 'Join Room'}
           </button>
-          {webSocketState === 'CONNECTING' && <p style={{ marginTop: '10px', color: '#6c757d' }}>Connecting to server...</p>}
-          {webSocketState !== 'OPEN' && webSocketState !== 'CONNECTING' && <p style={{ marginTop: '10px', color: '#dc3545' }}>Cannot connect to signaling server. Please ensure it is running.</p>}
-          {!localStream && webSocketState === 'OPEN' && <p style={{ marginTop: '10px', color: '#ffc107' }}>Waiting for camera/microphone access...</p>}
+          {webSocketState === 'CONNECTING' && <p style={{ marginTop: '10px', color: 'var(--foreground-muted, #888888)' }}>Connecting to server...</p>}
+          {webSocketState !== 'OPEN' && webSocketState !== 'CONNECTING' && <p style={{ marginTop: '10px', color: 'var(--color-error, #f87171)' }}>Cannot connect to signaling server. Please ensure it is running.</p>}
+          {!localStream && webSocketState === 'OPEN' && <p style={{ marginTop: '10px', color: 'var(--color-warning, #fbbf24)' }}>Waiting for camera/microphone access...</p>}
         </div>
       ) : (
-        <div style={{ marginBottom: '20px', padding: '15px', border: '1px solid #ddd', borderRadius: '8px', backgroundColor: '#e9ecef' }}>
-          <p>Joined Room: <strong>{roomId}</strong> as <strong>{userId}</strong></p>
+        <div style={{ marginBottom: '20px', padding: '15px', border: '1px solid var(--border, #333)', borderRadius: '8px', backgroundColor: 'var(--background-secondary, #222)' }}>
+          <p style={{ color: 'var(--foreground, #EAEAEA)' }}>Joined Room: <strong style={{ color: 'var(--accent, #3b82f6)' }}>{roomId}</strong> as <strong style={{ color: 'var(--accent, #3b82f6)' }}>{userId}</strong></p>
           <button onClick={handleLeaveRoom} style={{ 
              padding: '8px 15px', 
              cursor: 'pointer', 
-             backgroundColor: '#dc3545', 
+             backgroundColor: 'var(--color-error, #ef4444)',
              color: 'white', 
              border: 'none', 
-             borderRadius: '4px' 
+             borderRadius: '4px',
+             marginTop: '10px'
           }}>
             Leave Room
           </button>
@@ -249,28 +250,41 @@ export default function Home() {
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', justifyContent: 'center' }}>
         {/* Local Video */}
         <div style={{ textAlign: 'center' }}>
-          <h3 style={{ marginBottom: '5px' }}>You ({userId.substring(0,8)}...)</h3>
+          <h3 style={{ marginBottom: '5px', color: 'var(--foreground, #EAEAEA)' }}>You ({userId.substring(0,8)}...)</h3>
           <VideoPlayer stream={localStream} muted={true} />
           {/* Add Mute/Video Toggle Buttons */}
           {localStream && (
-              <div style={{ marginTop: '5px' }}>
+              <div style={{ marginTop: '10px' }}>
                   <button 
                       onClick={() => {
                           localStream.getAudioTracks().forEach(track => track.enabled = !track.enabled);
-                          // Force re-render to update button style if needed (optional)
                           setLocalStream(new MediaStream(localStream.getTracks())); 
                       }} 
-                      style={{ marginRight: '5px', padding: '5px 10px' }}
+                      style={{ 
+                          marginRight: '5px', 
+                          padding: '5px 10px',
+                          border: '1px solid var(--border, #333)',
+                          borderRadius: '4px',
+                          backgroundColor: 'var(--background-secondary, #222)',
+                          color: 'var(--foreground, #EAEAEA)',
+                          cursor: 'pointer'
+                      }}
                   >
                       {localStream.getAudioTracks().some(track => track.enabled) ? 'Mute Mic' : 'Unmute Mic'}
                   </button>
                   <button 
                      onClick={() => {
                           localStream.getVideoTracks().forEach(track => track.enabled = !track.enabled);
-                           // Force re-render to update button style if needed (optional)
                           setLocalStream(new MediaStream(localStream.getTracks())); 
                       }}
-                      style={{ padding: '5px 10px' }}
+                      style={{ 
+                          padding: '5px 10px',
+                          border: '1px solid var(--border, #333)',
+                          borderRadius: '4px',
+                          backgroundColor: 'var(--background-secondary, #222)',
+                          color: 'var(--foreground, #EAEAEA)',
+                          cursor: 'pointer'
+                      }}
                   >
                       {localStream.getVideoTracks().some(track => track.enabled) ? 'Stop Video' : 'Start Video'}
                   </button>
@@ -281,14 +295,14 @@ export default function Home() {
         {/* Remote Videos */} 
         {[...remoteStreams.entries()].map(([peerId, stream]) => (
           <div key={peerId} style={{ textAlign: 'center' }}>
-            <h3 style={{ marginBottom: '5px' }}>Peer: {peerId.substring(0, 8)}...</h3>
+            <h3 style={{ marginBottom: '5px', color: 'var(--foreground, #EAEAEA)' }}>Peer: {peerId.substring(0, 8)}...</h3>
             <VideoPlayer stream={stream} />
           </div>
         ))}
       </div>
 
        {isJoined && remoteStreams.size === 0 && (
-         <p style={{ marginTop: '20px', textAlign: 'center', color: '#6c757d' }}>Waiting for others to join the room...</p>
+         <p style={{ marginTop: '20px', textAlign: 'center', color: 'var(--foreground-muted, #888888)' }}>Waiting for others to join the room...</p>
        )}
 
     </main>
