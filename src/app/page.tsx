@@ -286,61 +286,63 @@ export default function Home() {
   // Function to get and log WebRTC stats
   const logPeerStats = useCallback(async () => {
     if (!isJoined || peers.size === 0) {
-        addLog('warn', 'Cannot get stats: Not in a room or no peers connected.');
-        return;
+      addLog('warn', 'Cannot get stats: Not in a room or no peers connected.');
+      return;
     }
 
     addLog('log', '--- Fetching WebRTC Stats ---');
+    
     for (const [peerId, peerData] of peers.entries()) {
-        if (peerData.peer) {
-            try {
-                // Access the underlying RTCPeerConnection via _pc
-                // Use type assertion carefully, acknowledging _pc is not officially typed
-                const pc = (peerData.peer as PeerInstance & { _pc: RTCPeerConnection })._pc;
-                if (!pc || typeof pc.getStats !== 'function') {
-                     addLog('error', `Could not access getStats for peer ${peerId}`);
-                     continue; // Skip this peer
-                }
+      if (peerData.peer) {
+        try {
+          const pc = (peerData.peer as PeerInstance & { _pc: RTCPeerConnection })._pc;
+          const stats = await pc.getStats();
+          
+          let totalBytesSent = 0;
+          let totalBytesReceived = 0;
+          let currentBitrate = 0;
+          let availableBitrate = 0;
+          let packetLoss = 0;
 
-                // getStats is asynchronous and returns a Promise
-                const statsReport: RTCStatsReport = await pc.getStats();
-                addLog('log', `Stats for Peer: ${peerId.substring(0, 6)}...`);
-                
-                // Iterate over the report (RTCStatsReport is like a Map)
-                statsReport.forEach(report => {
-                    // We are interested in 'inbound-rtp' for received data
-                    // and 'outbound-rtp' for sent data.
-                    // Let's log relevant parts for now, parsing is complex.
-                    if (report.type === 'inbound-rtp' && report.kind === 'video') {
-                         addLog('log', `  Inbound Video (${report.id}): Jitter=${report.jitter?.toFixed(4)}, PacketsLost=${report.packetsLost}, BytesReceived=${report.bytesReceived}`);
-                         if (report.trackIdentifier) {
-                            const trackStats = statsReport.get(report.trackIdentifier);
-                            if(trackStats) {
-                                addLog('log', `    Track: JitterBufferDelay=${trackStats.jitterBufferDelay?.toFixed(4)}, FramesDecoded=${trackStats.framesDecoded}, FramesDropped=${trackStats.framesDropped}`);
-                            }
-                         }
-                    } else if (report.type === 'outbound-rtp' && report.kind === 'video') {
-                         addLog('log', `  Outbound Video (${report.id}): PacketsSent=${report.packetsSent}, BytesSent=${report.bytesSent}, NACKs=${report.nackCount}`);
-                         if (report.trackIdentifier) {
-                             const trackStats = statsReport.get(report.trackIdentifier);
-                             if(trackStats) {
-                                 addLog('log', `    Track: FramesEncoded=${trackStats.framesEncoded}, QP Sum=${trackStats.qpSum}`);
-                             }
-                         }
-                    }
-                    // Could also log candidate pairs (type: 'candidate-pair', state: 'succeeded') for round-trip time (currentRoundTripTime)
-                    // report.type === 'candidate-pair' && report.state === 'succeeded' -> report.currentRoundTripTime
-                });
-
-            } catch (error) {
-                addLog('error', `Failed to get stats for peer ${peerId}: ${error instanceof Error ? error.message : String(error)}`);
+          stats.forEach(report => {
+            // Track cumulative bytes
+            if (report.type === 'outbound-rtp') {
+              totalBytesSent += report.bytesSent || 0;
             }
-        } else {
-             addLog('warn', `Peer object not found for peerId ${peerId} when getting stats.`);
+            if (report.type === 'inbound-rtp') {
+              totalBytesReceived += report.bytesReceived || 0;
+            }
+
+            // Track connection quality
+            if (report.type === 'candidate-pair' && report.nominated) {
+              currentBitrate = report.availableOutgoingBitrate || 0;
+              availableBitrate = report.availableIncomingBitrate || 0;
+              packetLoss = report.requestsReceived && report.responsesReceived ? 
+                ((report.requestsReceived - report.responsesReceived) / report.requestsReceived) * 100 : 0;
+            }
+          });
+
+          // Convert bytes to MB
+          const sentMB = totalBytesSent / (1024 * 1024);
+          const receivedMB = totalBytesReceived / (1024 * 1024);
+          
+          // Convert bitrate to Mbps
+          const currentMbps = currentBitrate / 1e6;
+          const availableMbps = availableBitrate / 1e6;
+
+          addLog('log', `Peer ${peerId.substring(0, 6)}:
+  Total Sent: ${sentMB.toFixed(2)} MB
+  Total Received: ${receivedMB.toFixed(2)} MB
+  Current Bitrate: ${currentMbps.toFixed(2)} Mbps
+  Available Bitrate: ${availableMbps.toFixed(2)} Mbps
+  Packet Loss: ${packetLoss.toFixed(2)}%`);
+
+        } catch (error) {
+          addLog('error', `Failed to get stats for peer ${peerId}: ${error instanceof Error ? error.message : String(error)}`);
         }
+      }
     }
     addLog('log', '--- Finished Fetching Stats ---');
-
   }, [peers, isJoined, addLog]);
 
   // LogWindow component definition moved inside Home
@@ -928,35 +930,46 @@ export default function Home() {
 
         /* Log Window Styles */
         .log-window {
-            position: fixed; /* Overlay */
+            position: fixed;
             bottom: 20px;
             right: 20px;
             width: 90%;
-            max-width: 500px;
+            max-width: 600px;
             height: 300px;
-            background-color: rgba(30, 30, 30, 0.95); /* Dark semi-transparent */
-            border: 1px solid var(--border);
-            border-radius: 10px;
-            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
-            z-index: 100;
+            background: rgba(30, 30, 30, 0.95);
+            border: 1px solid #444;
+            border-radius: 8px;
+            z-index: 1000;
+            backdrop-filter: blur(5px);
             display: flex;
             flex-direction: column;
-            backdrop-filter: blur(5px);
-            overflow: hidden; /* Contain children */
+        }
+        .log-content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 10px;
+            font-family: monospace;
+            font-size: 0.9em;
+        }
+        .log-entry {
+            margin: 4px 0;
+            padding: 4px;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
         }
         .log-header {
+            padding: 10px;
+            background: rgba(0,0,0,0.3);
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 10px 15px;
-            background-color: rgba(0, 0, 0, 0.2);
-            border-bottom: 1px solid var(--border);
-            flex-shrink: 0;
         }
-        .log-header h3 {
-            margin: 0;
-            font-size: 1em;
-            font-weight: 600;
+        .stats-button {
+            background: #007aff;
+            border: none;
+            color: white;
+            padding: 5px 10px;
+            border-radius: 4px;
+            cursor: pointer;
         }
         .close-log-button {
             background: none;
@@ -970,63 +983,11 @@ export default function Home() {
         .close-log-button:hover {
             color: var(--foreground);
         }
-        .log-content {
-            padding: 10px 15px;
-            overflow-y: auto;
-            flex-grow: 1;
-            font-family: monospace;
-            font-size: 0.85em;
-        }
-        .log-entry {
-            margin: 0 0 5px;
-            padding: 2px 0;
-            white-space: pre-wrap; /* Wrap long lines */
-            word-break: break-all; /* Break long words */
-            border-bottom: 1px solid rgba(255, 255, 255, 0.05); /* Subtle separator */
-        }
-        .log-entry:last-child {
-            border-bottom: none;
-        }
-        .log-timestamp {
-            color: var(--foreground-muted);
-            margin-right: 10px;
-            font-size: 0.9em;
-        }
-        .log-message {
-            /* Default color handled by log type */
-        }
-        .log-log .log-message {
-            color: var(--foreground);
-        }
-        .log-warn .log-message {
-            color: var(--color-warning);
-        }
-        .log-error .log-message {
-            color: var(--color-error);
-        }
         .no-logs {
             color: var(--foreground-muted);
             text-align: center;
             margin-top: 20px;
         }
-        .stats-button {
-            background: none;
-            border: 1px solid var(--border);
-            color: var(--foreground-muted);
-            padding: 2px 6px;
-            border-radius: 4px;
-            cursor: pointer;
-            margin-left: auto; /* Push it left before the close button */
-            margin-right: 10px;
-            font-size: 0.9em;
-            transition: all 0.2s ease;
-        }
-        .stats-button:hover {
-            background-color: var(--background-input);
-            border-color: var(--accent);
-            color: var(--accent);
-        }
-
       `}</style>
     </>
   );
