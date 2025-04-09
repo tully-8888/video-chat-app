@@ -5,7 +5,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useWebRTC } from './hooks/useWebRTC';
 
 // Simple Video Player Component
-const VideoPlayer = ({ stream, muted = false }: { stream: MediaStream | null, muted?: boolean }) => {
+const VideoPlayer = ({ stream, muted = false, className = '' }: { stream: MediaStream | null, muted?: boolean, className?: string }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
@@ -19,17 +19,16 @@ const VideoPlayer = ({ stream, muted = false }: { stream: MediaStream | null, mu
   return (
     <video
       ref={videoRef}
+      className={className}
       autoPlay
       playsInline // Important for mobile browsers
       muted={muted}
-      style={{ 
-        width: '300px', 
-        // height: '225px', // Use aspectRatio for better responsiveness
-        aspectRatio: '4 / 3', 
-        margin: '5px', 
-        border: '1px solid #ccc', 
+      style={{
+        display: 'block',
+        width: '100%',
+        height: '100%',
+        objectFit: 'cover',
         backgroundColor: 'black',
-        borderRadius: '4px'
       }}
       onError={(event) => {
         console.error("Video Player Error:", event);
@@ -44,9 +43,9 @@ export default function Home() {
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isJoining, setIsJoining] = useState(false); // Prevent multiple join attempts
-
-  // State specifically for remote streams managed by the hook's callbacks
   const [remoteStreams, setRemoteStreams] = useState<Map<string, MediaStream>>(new Map());
+  const [isMicMuted, setIsMicMuted] = useState(false);
+  const [isVideoStopped, setIsVideoStopped] = useState(false);
 
   const handleRemoteStream = useCallback((peerId: string, stream: MediaStream) => {
     console.log('New remote stream received from:', peerId);
@@ -173,6 +172,9 @@ export default function Home() {
     rtcLeaveRoom();
     setIsJoining(false); // Reset joining state
     setRemoteStreams(new Map()); // Clear remote streams on leave
+    // Reset mute/video state visually on leave
+    setIsMicMuted(false);
+    setIsVideoStopped(false);
   };
   
   // Update joining status based on hook state
@@ -182,134 +184,485 @@ export default function Home() {
     }
   }, [isJoined]);
 
+  // Toggle Mic
+  const toggleMic = useCallback(() => {
+    if (localStream) {
+        let muted = false;
+        localStream.getAudioTracks().forEach(track => {
+            track.enabled = !track.enabled;
+            muted = !track.enabled; // Update based on the new state
+        });
+        setIsMicMuted(muted);
+        // No need to create a new stream object just for state update
+        // setLocalStream(new MediaStream(localStream.getTracks()));
+    }
+  }, [localStream]);
+
+  // Toggle Video
+  const toggleVideo = useCallback(() => {
+    if (localStream) {
+        let stopped = false;
+        localStream.getVideoTracks().forEach(track => {
+            track.enabled = !track.enabled;
+            stopped = !track.enabled; // Update based on the new state
+        });
+        setIsVideoStopped(stopped);
+        // No need to create a new stream object just for state update
+        // setLocalStream(new MediaStream(localStream.getTracks()));
+    }
+  }, [localStream]);
+
+  // Determine layout state for easier conditional rendering
+  const mainRemoteStreamEntry = remoteStreams.size > 0 ? [...remoteStreams.entries()][0] : null;
+  // const mainRemotePeerId = mainRemoteStreamEntry ? mainRemoteStreamEntry[0] : null; // Removed as unused
+  const mainRemoteStream = mainRemoteStreamEntry ? mainRemoteStreamEntry[1] : null;
+  const otherRemoteStreams = remoteStreams.size > 1 ? [...remoteStreams.entries()].slice(1) : [];
+
   return (
-    <main style={{ padding: '20px', fontFamily: 'sans-serif', maxWidth: '1200px', margin: 'auto' }}>
-      <h1 style={{ textAlign: 'center', marginBottom: '30px' }}>Simple P2P Video Chat</h1>
+    <>
+      <main className={`main-container ${isJoined ? 'in-call' : 'pre-join'}`}>
+        {!isJoined ? (
+          // --- Pre-Join Screen ---
+          <div className="join-container">
+            <h1 className="title">Video Chat</h1>
+            <p className="subtitle">Enter details to join or start a room</p>
 
-      {error && (
-          <p style={{ color: '#dc3545', backgroundColor: '#f8d7da', border: '1px solid #f5c6cb', padding: '10px', borderRadius: '4px', marginBottom: '15px' }}>
-             <strong>Error:</strong> {error}
-          </p>
-      )}
-      <p style={{ textAlign: 'center', marginBottom: '20px', fontSize: '0.9em', color: 'var(--foreground-muted, #888888)' }}>
-        WebSocket Status: <span style={{ fontWeight: 'bold' }}>{webSocketState}</span>
-      </p>
-      
-      {!isJoined ? (
-        <div style={{ marginBottom: '20px', padding: '20px', border: '1px solid var(--border, #333)', borderRadius: '8px', backgroundColor: 'var(--background-secondary, #222)' }}>
-          <h2 style={{ marginTop: '0', marginBottom: '15px', color: 'var(--foreground, #EAEAEA)' }}>Join a Room</h2>
-          <div style={{ display: 'flex', gap: '10px', marginBottom: '15px' }}>
-             <input
-               type="text"
-               placeholder="Room ID"
-               value={roomId}
-               onChange={(e) => setRoomId(e.target.value)}
-               disabled={isJoining}
-               style={{ padding: '10px', border: '1px solid var(--border, #333)', borderRadius: '4px', flexGrow: 1, backgroundColor: 'var(--background-input, #333)', color: 'var(--foreground, #EAEAEA)' }}
-             />
-             <input
-               type="text"
-               placeholder="Your User ID"
-               value={userId}
-               onChange={(e) => setUserId(e.target.value)}
-               disabled={isJoining}
-               style={{ padding: '10px', border: '1px solid var(--border, #333)', borderRadius: '4px', flexGrow: 1, backgroundColor: 'var(--background-input, #333)', color: 'var(--foreground, #EAEAEA)' }}
-             />
+            {error && (
+              <p className="error-message">
+                <strong>Error:</strong> {error}
+              </p>
+            )}
+            <p className="ws-status">
+              WebSocket: <span className={`status-${webSocketState.toLowerCase()}`}>{webSocketState}</span>
+            </p>
+
+            <div className="input-group">
+              <input
+                type="text"
+                placeholder="Room ID"
+                value={roomId}
+                onChange={(e) => setRoomId(e.target.value)}
+                disabled={isJoining}
+                className="input-field"
+              />
+              <input
+                type="text"
+                placeholder="Your User ID (e.g., Alice)"
+                value={userId}
+                onChange={(e) => setUserId(e.target.value)}
+                disabled={isJoining}
+                className="input-field"
+              />
+            </div>
+            <button
+              onClick={handleJoinRoom}
+              disabled={webSocketState !== 'OPEN' || isJoining || !roomId.trim() || !userId.trim()}
+              className="join-button"
+            >
+              {isJoining ? 'Joining...' : 'Join Room'}
+            </button>
+            {webSocketState === 'CONNECTING' && <p className="status-text">Connecting to server...</p>}
+            {webSocketState !== 'OPEN' && webSocketState !== 'CONNECTING' && <p className="status-text error">Cannot connect to signaling server.</p>}
+            {!localStream && webSocketState === 'OPEN' && <p className="status-text warning">Waiting for camera/microphone...</p>}
           </div>
-          <button 
-            onClick={handleJoinRoom} 
-            disabled={webSocketState !== 'OPEN' || isJoining}
-            style={{ 
-                padding: '10px 20px', 
-                cursor: (webSocketState !== 'OPEN' || isJoining) ? 'not-allowed' : 'pointer',
-                backgroundColor: (webSocketState !== 'OPEN' || isJoining) ? 'var(--background-disabled, #555)' : 'var(--accent, #3b82f6)',
-                color: (webSocketState !== 'OPEN' || isJoining) ? 'var(--foreground-muted, #999)' : 'white',
-                border: 'none',
-                borderRadius: '4px',
-                fontSize: '1em' 
-            }}
-          >
-            {isJoining ? 'Joining...' : 'Join Room'}
-          </button>
-          {webSocketState === 'CONNECTING' && <p style={{ marginTop: '10px', color: 'var(--foreground-muted, #888888)' }}>Connecting to server...</p>}
-          {webSocketState !== 'OPEN' && webSocketState !== 'CONNECTING' && <p style={{ marginTop: '10px', color: 'var(--color-error, #f87171)' }}>Cannot connect to signaling server. Please ensure it is running.</p>}
-          {!localStream && webSocketState === 'OPEN' && <p style={{ marginTop: '10px', color: 'var(--color-warning, #fbbf24)' }}>Waiting for camera/microphone access...</p>}
-        </div>
-      ) : (
-        <div style={{ marginBottom: '20px', padding: '15px', border: '1px solid var(--border, #333)', borderRadius: '8px', backgroundColor: 'var(--background-secondary, #222)' }}>
-          <p style={{ color: 'var(--foreground, #EAEAEA)' }}>Joined Room: <strong style={{ color: 'var(--accent, #3b82f6)' }}>{roomId}</strong> as <strong style={{ color: 'var(--accent, #3b82f6)' }}>{userId}</strong></p>
-          <button onClick={handleLeaveRoom} style={{ 
-             padding: '8px 15px', 
-             cursor: 'pointer', 
-             backgroundColor: 'var(--color-error, #ef4444)',
-             color: 'white', 
-             border: 'none', 
-             borderRadius: '4px',
-             marginTop: '10px'
-          }}>
-            Leave Room
-          </button>
-        </div>
-      )}
 
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', justifyContent: 'center' }}>
-        {/* Local Video */}
-        <div style={{ textAlign: 'center' }}>
-          <h3 style={{ marginBottom: '5px', color: 'var(--foreground, #EAEAEA)' }}>You ({userId.substring(0,8)}...)</h3>
-          <VideoPlayer stream={localStream} muted={true} />
-          {/* Add Mute/Video Toggle Buttons */}
-          {localStream && (
-              <div style={{ marginTop: '10px' }}>
-                  <button 
-                      onClick={() => {
-                          localStream.getAudioTracks().forEach(track => track.enabled = !track.enabled);
-                          setLocalStream(new MediaStream(localStream.getTracks())); 
-                      }} 
-                      style={{ 
-                          marginRight: '5px', 
-                          padding: '5px 10px',
-                          border: '1px solid var(--border, #333)',
-                          borderRadius: '4px',
-                          backgroundColor: 'var(--background-secondary, #222)',
-                          color: 'var(--foreground, #EAEAEA)',
-                          cursor: 'pointer'
-                      }}
-                  >
-                      {localStream.getAudioTracks().some(track => track.enabled) ? 'Mute Mic' : 'Unmute Mic'}
-                  </button>
-                  <button 
-                     onClick={() => {
-                          localStream.getVideoTracks().forEach(track => track.enabled = !track.enabled);
-                          setLocalStream(new MediaStream(localStream.getTracks())); 
-                      }}
-                      style={{ 
-                          padding: '5px 10px',
-                          border: '1px solid var(--border, #333)',
-                          borderRadius: '4px',
-                          backgroundColor: 'var(--background-secondary, #222)',
-                          color: 'var(--foreground, #EAEAEA)',
-                          cursor: 'pointer'
-                      }}
-                  >
-                      {localStream.getVideoTracks().some(track => track.enabled) ? 'Stop Video' : 'Start Video'}
-                  </button>
-              </div>
-          )}
-        </div>
-        
-        {/* Remote Videos */} 
-        {[...remoteStreams.entries()].map(([peerId, stream]) => (
-          <div key={peerId} style={{ textAlign: 'center' }}>
-            <h3 style={{ marginBottom: '5px', color: 'var(--foreground, #EAEAEA)' }}>Peer: {peerId.substring(0, 8)}...</h3>
-            <VideoPlayer stream={stream} />
+        ) : (
+          // --- In-Call Screen ---
+          <div className="call-container">
+              {/* Main Video Area (Handles full screen for primary remote/local) */}
+              <div className="main-video-area">
+                 {mainRemoteStream ? (
+                    <VideoPlayer stream={mainRemoteStream} className="main-video" />
+                 ) : (
+                    <VideoPlayer stream={localStream} muted={true} className="main-video local-only" />
+                 )}
+
+                {/* Local Video (Picture-in-Picture when remote exists) */}
+                {mainRemoteStream && (
+                  <div className="local-pip-container">
+                    <VideoPlayer stream={localStream} muted={true} className="local-pip-video" />
+                  </div>
+                )}
+             </div>
+
+             {/* Gallery for other remote videos (e.g., on sidebar for desktop) */}
+             {otherRemoteStreams.length > 0 && (
+                 <div className="remote-gallery">
+                     {otherRemoteStreams.map(([peerId, stream]) => (
+                         <div key={peerId} className="gallery-item">
+                             <VideoPlayer stream={stream} className="gallery-video" />
+                             <span className="gallery-peer-id">{peerId.substring(0, 6)}...</span>
+                         </div>
+                     ))}
+                 </div>
+             )}
+
+             {/* Call Info (Could be overlay or top bar) */}
+             <div className="call-info">
+                 Room: <strong>{roomId}</strong> | You: <strong>{userId}</strong>
+             </div>
+
+             {/* Loading/Waiting Message */}
+             {remoteStreams.size === 0 && (
+                 <div className="waiting-message">
+                     Waiting for others to join...
+                 </div>
+             )}
+
+
+             {/* Controls Bar */}
+             <div className="controls-bar">
+                <button onClick={toggleMic} className={`control-button ${isMicMuted ? 'muted' : ''}`}>
+                   {isMicMuted ? 'Unmute' : 'Mute'} {/* Replace with icons later */}
+                </button>
+                <button onClick={toggleVideo} className={`control-button ${isVideoStopped ? 'stopped' : ''}`}>
+                   {isVideoStopped ? 'Start Vid' : 'Stop Vid'} {/* Replace with icons later */}
+                </button>
+                <button onClick={handleLeaveRoom} className="control-button leave">
+                   Leave
+                </button>
+             </div>
           </div>
-        ))}
-      </div>
+        )}
+      </main>
 
-       {isJoined && remoteStreams.size === 0 && (
-         <p style={{ marginTop: '20px', textAlign: 'center', color: 'var(--foreground-muted, #888888)' }}>Waiting for others to join the room...</p>
-       )}
+      {/* Global styles and component-specific styles */}
+      <style jsx>{`
+        /* Basic Reset & Theming */
+        :global(body) {
+          margin: 0;
+          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+          background-color: var(--background, #1a1a1a);
+          color: var(--foreground, #eaeaea);
+          overflow: hidden; /* Prevent scrollbars from main page */
+        }
+        :global(:root) {
+            /* Define theme variables if not already globally defined */
+             --background: #1a1a1a;
+             --background-secondary: #2a2a2a;
+             --background-input: #333;
+             --foreground: #eaeaea;
+             --foreground-muted: #888888;
+             --border: #444;
+             --accent: #3b82f6; /* Blue */
+             --color-error: #ef4444; /* Red */
+             --color-warning: #fbbf24; /* Amber */
+             --color-success: #22c55e; /* Green */
+             --background-disabled: #555;
+             --foreground-disabled: #999;
+        }
 
-    </main>
+        /* Main Container Layouts */
+        .main-container {
+          display: flex;
+          flex-direction: column;
+          height: 100vh;
+          width: 100vw;
+          overflow: hidden;
+        }
+        .main-container.pre-join {
+          justify-content: center;
+          align-items: center;
+          padding: 20px;
+        }
+         .main-container.in-call {
+           /* Layout handled by .call-container */
+         }
+
+        /* Pre-Join Screen Styles */
+        .join-container {
+          background-color: var(--background-secondary);
+          padding: 30px 40px;
+          border-radius: 12px;
+          box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+          text-align: center;
+          max-width: 450px;
+          width: 100%;
+        }
+        .title {
+          margin: 0 0 10px;
+          font-size: 2.5em;
+          font-weight: 600;
+          color: var(--foreground);
+        }
+        .subtitle {
+          margin: 0 0 25px;
+          color: var(--foreground-muted);
+          font-size: 1em;
+        }
+        .input-group {
+          display: flex;
+          flex-direction: column;
+          gap: 15px;
+          margin-bottom: 25px;
+        }
+        .input-field {
+          padding: 12px 15px;
+          border: 1px solid var(--border);
+          border-radius: 8px;
+          background-color: var(--background-input);
+          color: var(--foreground);
+          font-size: 1em;
+          transition: border-color 0.2s ease, box-shadow 0.2s ease;
+        }
+        .input-field:focus {
+          outline: none;
+          border-color: var(--accent);
+          box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.3);
+        }
+        .join-button {
+          padding: 12px 25px;
+          border: none;
+          border-radius: 8px;
+          background-color: var(--accent);
+          color: white;
+          font-size: 1.1em;
+          font-weight: 500;
+          cursor: pointer;
+          transition: background-color 0.2s ease, opacity 0.2s ease;
+          width: 100%;
+        }
+        .join-button:hover:not(:disabled) {
+          background-color: #2563eb; /* Darker blue */
+        }
+        .join-button:disabled {
+          background-color: var(--background-disabled);
+          color: var(--foreground-disabled);
+          cursor: not-allowed;
+          opacity: 0.7;
+        }
+        .error-message {
+           color: var(--color-error);
+           background-color: rgba(239, 68, 68, 0.1);
+           border: 1px solid rgba(239, 68, 68, 0.3);
+           padding: 10px;
+           border-radius: 6px;
+           margin-bottom: 15px;
+           text-align: left;
+           font-size: 0.9em;
+        }
+         .ws-status {
+           margin-bottom: 20px;
+           font-size: 0.9em;
+           color: var(--foreground-muted);
+         }
+         .ws-status span { font-weight: bold; }
+         .ws-status .status-connecting { color: var(--color-warning); }
+         .ws-status .status-open { color: var(--color-success); }
+         .ws-status .status-closing, .ws-status .status-closed { color: var(--color-error); }
+         .status-text {
+             margin-top: 15px;
+             font-size: 0.9em;
+             color: var(--foreground-muted);
+         }
+         .status-text.error { color: var(--color-error); }
+         .status-text.warning { color: var(--color-warning); }
+
+
+        /* In-Call Screen Styles */
+        .call-container {
+          display: flex; /* Use flex for main layout */
+          width: 100%;
+          height: 100%;
+          background-color: #000; /* Black background for the call */
+          position: relative; /* For positioning children like controls */
+        }
+
+        .main-video-area {
+           flex-grow: 1; /* Takes up remaining space */
+           position: relative; /* Context for PiP */
+           overflow: hidden; /* Ensure video fits */
+           background-color: #000;
+           display: flex;
+           justify-content: center;
+           align-items: center;
+        }
+
+        /* Style the video element itself via the class passed */
+        :global(.main-video) {
+           max-width: 100%;
+           max-height: 100%;
+           object-fit: contain; /* Contain ensures full video is visible */
+           background-color: #000;
+        }
+        :global(.main-video.local-only) {
+            /* Could add specific styles if needed when only local is shown */
+        }
+
+        .local-pip-container {
+          position: absolute;
+          bottom: 80px; /* Above controls */
+          right: 20px;
+          width: 15%; /* Responsive width */
+          max-width: 180px; /* Max size */
+          min-width: 100px; /* Min size */
+          aspect-ratio: 4 / 3;
+          border: 2px solid rgba(255, 255, 255, 0.3);
+          border-radius: 8px;
+          overflow: hidden; /* Clip the video */
+          box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+          z-index: 10;
+          background-color: #000; /* BG in case video doesn't load */
+        }
+        :global(.local-pip-video) {
+          width: 100%;
+          height: 100%;
+          object-fit: cover;
+        }
+
+        .remote-gallery {
+          display: none; /* Hidden by default, shown on larger screens */
+          flex-direction: column;
+          gap: 10px;
+          padding: 10px;
+          background-color: var(--background-secondary);
+          width: 200px; /* Fixed width sidebar */
+          height: 100%;
+          overflow-y: auto;
+          flex-shrink: 0; /* Prevent shrinking */
+        }
+        .gallery-item {
+           position: relative;
+           aspect-ratio: 4 / 3;
+           border-radius: 6px;
+           overflow: hidden;
+           background-color: #000;
+        }
+        :global(.gallery-video) {
+           width: 100%;
+           height: 100%;
+           object-fit: cover;
+        }
+         .gallery-peer-id {
+           position: absolute;
+           bottom: 5px;
+           left: 5px;
+           background-color: rgba(0, 0, 0, 0.5);
+           color: white;
+           padding: 2px 5px;
+           font-size: 0.8em;
+           border-radius: 3px;
+         }
+
+
+        .call-info {
+          position: absolute;
+          top: 15px;
+          left: 15px;
+          background-color: rgba(0, 0, 0, 0.4);
+          padding: 5px 10px;
+          border-radius: 6px;
+          font-size: 0.9em;
+          color: var(--foreground);
+          z-index: 5;
+        }
+        .call-info strong {
+          color: var(--accent);
+        }
+
+        .waiting-message {
+          position: absolute;
+          top: 50%;
+          left: 50%;
+          transform: translate(-50%, -50%);
+          color: var(--foreground-muted);
+          font-size: 1.2em;
+          background-color: rgba(0, 0, 0, 0.6);
+          padding: 15px 25px;
+          border-radius: 8px;
+        }
+
+        /* Controls Bar */
+        .controls-bar {
+          position: absolute;
+          bottom: 0;
+          left: 0;
+          width: 100%;
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          padding: 15px 0;
+          gap: 15px;
+          background: linear-gradient(to top, rgba(0, 0, 0, 0.7), rgba(0, 0, 0, 0)); /* Gradient background */
+          z-index: 20;
+        }
+        .control-button {
+          background-color: rgba(255, 255, 255, 0.2);
+          border: none;
+          color: white;
+          padding: 10px;
+          border-radius: 50%; /* Circular buttons */
+          width: 50px;
+          height: 50px;
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          cursor: pointer;
+          font-size: 0.8em; /* Adjust if using text */
+          font-weight: 500;
+          transition: background-color 0.2s ease;
+          /* Add icons later */
+        }
+        .control-button:hover {
+          background-color: rgba(255, 255, 255, 0.3);
+        }
+        .control-button.muted, .control-button.stopped {
+          background-color: var(--background-secondary); /* Indicate active state */
+          color: var(--foreground-muted);
+        }
+        .control-button.leave {
+          background-color: var(--color-error);
+        }
+        .control-button.leave:hover {
+          background-color: #dc2626; /* Darker red */
+        }
+
+        /* Responsive Adjustments */
+        @media (min-width: 768px) {
+           .call-container {
+              /* On larger screens, maybe don't force full black BG unless needed */
+              background-color: var(--background);
+           }
+           .main-video-area {
+              /* Could adjust main video area sizing if gallery is shown */
+           }
+           .local-pip-container {
+              /* Slightly larger PiP on desktop */
+              width: 18%;
+              max-width: 220px;
+           }
+           .remote-gallery {
+              display: flex; /* Show gallery sidebar */
+           }
+           .call-info {
+             /* Keep top left */
+           }
+           .controls-bar {
+             /* Maybe less prominent background on desktop */
+             background: rgba(0, 0, 0, 0.1);
+             padding: 10px 0;
+             bottom: 10px; /* Give some space */
+             left: 50%;
+             transform: translateX(-50%);
+             width: auto; /* Fit content */
+             border-radius: 10px;
+           }
+           .waiting-message {
+             /* No change needed */
+           }
+        }
+
+        @media (min-width: 1200px) {
+            .remote-gallery {
+                width: 250px; /* Wider gallery on very large screens */
+            }
+            .local-pip-container {
+              max-width: 250px;
+            }
+        }
+
+
+      `}</style>
+    </>
   );
 }
