@@ -75,8 +75,9 @@ export default function VideoPlayer({
         // Cancel any pending play operations by pausing
         try {
           videoElement.pause();
-        } catch (e) {
-          // Ignore errors from pausing
+        } catch /* (e) */ { // Remove the unused 'e' variable
+          // Ignore errors from pausing (comment indicates intention)
+          console.log('Ignoring potential error during video pause on cleanup.') // Optional log
         }
       }
     };
@@ -92,6 +93,9 @@ export default function VideoPlayer({
         playsInline
         muted={muted}
         controls={showControls}
+        onError={(event) => {
+          console.error("Video Player Component Error:", event);
+        }}
       />
 
       {/* Placeholder when no video */}
