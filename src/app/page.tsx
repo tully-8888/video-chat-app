@@ -274,13 +274,13 @@ export default function Home() {
                  {mainRemoteStream ? (
                     <VideoPlayer stream={mainRemoteStream} className="main-video" />
                  ) : (
-                    <VideoPlayer stream={localStream} muted={true} className="main-video local-only" />
+                    <VideoPlayer stream={localStream} muted={true} className="main-video local-only local-preview" />
                  )}
 
                 {/* Local Video (Picture-in-Picture when remote exists) */}
                 {mainRemoteStream && (
                   <div className="local-pip-container">
-                    <VideoPlayer stream={localStream} muted={true} className="local-pip-video" />
+                    <VideoPlayer stream={localStream} muted={true} className="local-pip-video local-preview" />
                   </div>
                 )}
              </div>
@@ -489,6 +489,11 @@ export default function Home() {
             /* Could add specific styles if needed when only local is shown */
         }
 
+        /* Mirror the local preview */
+        :global(.local-preview video) { /* Target the inner video element */
+            transform: scaleX(-1);
+        }
+
         .local-pip-container {
           position: absolute;
           bottom: 80px; /* Above controls */
@@ -509,6 +514,12 @@ export default function Home() {
           height: 100%;
           object-fit: cover;
         }
+
+        /* Mirror the local preview in PiP */
+        /* :global(.local-pip-video.local-preview video) { 
+            transform: scaleX(-1); 
+        } */ 
+        /* Combined rule above handles both cases */
 
         .remote-gallery {
           display: none; /* Hidden by default, shown on larger screens */
