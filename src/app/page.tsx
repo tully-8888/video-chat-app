@@ -265,7 +265,6 @@ export default function Home() {
             </button>
             {webSocketState === 'CONNECTING' && <p className="status-text">Connecting to server...</p>}
             {webSocketState !== 'OPEN' && webSocketState !== 'CONNECTING' && <p className="status-text error">Cannot connect to signaling server.</p>}
-            {!localStream && webSocketState === 'OPEN' && <p className="status-text warning">Waiting for camera/microphone...</p>}
           </div>
 
         ) : (
