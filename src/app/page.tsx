@@ -3,6 +3,7 @@
 import React from 'react';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useWebRTC } from './hooks/useWebRTC';
+import type { Instance as PeerInstance } from 'simple-peer'; // Import PeerInstance type
 
 // Simple Video Player Component
 const VideoPlayer = ({ stream, muted = false, className = '' }: { stream: MediaStream | null, muted?: boolean, className?: string }) => {
@@ -130,7 +131,8 @@ export default function Home() {
     joinRoom: rtcJoinRoom, 
     leaveRoom: rtcLeaveRoom, 
     isJoined, 
-    webSocketState
+    webSocketState,
+    peers
   } = useWebRTC({
     localStream,
     onRemoteStream: handleRemoteStream,
@@ -281,6 +283,66 @@ export default function Home() {
   // const mainRemotePeerId = mainRemoteStreamEntry ? mainRemoteStreamEntry[0] : null; // Removed as unused
   const mainRemoteStream = mainRemoteStreamEntry ? mainRemoteStreamEntry[1] : null;
   const otherRemoteStreams = remoteStreams.size > 1 ? [...remoteStreams.entries()].slice(1) : [];
+
+  // Function to get and log WebRTC stats
+  const logPeerStats = useCallback(async () => {
+    if (!isJoined || peers.size === 0) {
+        addLog('warn', 'Cannot get stats: Not in a room or no peers connected.');
+        return;
+    }
+
+    addLog('log', '--- Fetching WebRTC Stats ---');
+    for (const [peerId, peerData] of peers.entries()) {
+        if (peerData.peer) {
+            try {
+                // Access the underlying RTCPeerConnection via _pc
+                // Use type assertion carefully, acknowledging _pc is not officially typed
+                const pc = (peerData.peer as PeerInstance & { _pc: RTCPeerConnection })._pc;
+                if (!pc || typeof pc.getStats !== 'function') {
+                     addLog('error', `Could not access getStats for peer ${peerId}`);
+                     continue; // Skip this peer
+                }
+
+                // getStats is asynchronous and returns a Promise
+                const statsReport: RTCStatsReport = await pc.getStats();
+                addLog('log', `Stats for Peer: ${peerId.substring(0, 6)}...`);
+                
+                // Iterate over the report (RTCStatsReport is like a Map)
+                statsReport.forEach(report => {
+                    // We are interested in 'inbound-rtp' for received data
+                    // and 'outbound-rtp' for sent data.
+                    // Let's log relevant parts for now, parsing is complex.
+                    if (report.type === 'inbound-rtp' && report.kind === 'video') {
+                         addLog('log', `  Inbound Video (${report.id}): Jitter=${report.jitter?.toFixed(4)}, PacketsLost=${report.packetsLost}, BytesReceived=${report.bytesReceived}`);
+                         if (report.trackIdentifier) {
+                            const trackStats = statsReport.get(report.trackIdentifier);
+                            if(trackStats) {
+                                addLog('log', `    Track: JitterBufferDelay=${trackStats.jitterBufferDelay?.toFixed(4)}, FramesDecoded=${trackStats.framesDecoded}, FramesDropped=${trackStats.framesDropped}`);
+                            }
+                         }
+                    } else if (report.type === 'outbound-rtp' && report.kind === 'video') {
+                         addLog('log', `  Outbound Video (${report.id}): PacketsSent=${report.packetsSent}, BytesSent=${report.bytesSent}, NACKs=${report.nackCount}`);
+                         if (report.trackIdentifier) {
+                             const trackStats = statsReport.get(report.trackIdentifier);
+                             if(trackStats) {
+                                 addLog('log', `    Track: FramesEncoded=${trackStats.framesEncoded}, QP Sum=${trackStats.qpSum}`);
+                             }
+                         }
+                    }
+                    // Could also log candidate pairs (type: 'candidate-pair', state: 'succeeded') for round-trip time (currentRoundTripTime)
+                    // report.type === 'candidate-pair' && report.state === 'succeeded' -> report.currentRoundTripTime
+                });
+
+            } catch (error) {
+                addLog('error', `Failed to get stats for peer ${peerId}: ${error instanceof Error ? error.message : String(error)}`);
+            }
+        } else {
+             addLog('warn', `Peer object not found for peerId ${peerId} when getting stats.`);
+        }
+    }
+    addLog('log', '--- Finished Fetching Stats ---');
+
+  }, [peers, isJoined, addLog]);
 
   return (
     <>
@@ -863,6 +925,23 @@ export default function Home() {
             color: var(--foreground-muted);
             text-align: center;
             margin-top: 20px;
+        }
+        .stats-button {
+            background: none;
+            border: 1px solid var(--border);
+            color: var(--foreground-muted);
+            padding: 2px 6px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-left: auto; /* Push it left before the close button */
+            margin-right: 10px;
+            font-size: 0.9em;
+            transition: all 0.2s ease;
+        }
+        .stats-button:hover {
+            background-color: var(--background-input);
+            border-color: var(--accent);
+            color: var(--accent);
         }
 
       `}</style>
