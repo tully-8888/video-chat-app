@@ -1,8 +1,10 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #121212; /* Dark background */
+  --foreground: #EAEAEA; /* Light text */
+  --accent: #3b82f6;      /* Vibrant blue accent (Tailwind blue-500) */
+  --border: #333333;      /* Dark gray border/secondary */
 }
 
 @theme inline {
@@ -14,8 +16,10 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --background: #121212; /* Ensure dark mode preference uses the same dark colors */
+    --foreground: #EAEAEA;
+    --accent: #3b82f6;
+    --border: #333333;
   }
 }
 
