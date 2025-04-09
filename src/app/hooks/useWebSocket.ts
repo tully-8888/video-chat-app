@@ -31,18 +31,51 @@ interface UseWebSocketReturn {
 
 // Determine WebSocket URL based on environment
 const getWebSocketURL = (): string => {
-  // For local development, connect to the Node server's port (e.g., 3001)
-  if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
-    // Assuming the signaling server runs on port 3001 locally
-    // Use ws:// not wss:// for local unsecured connection
-    const localPort = process.env.NEXT_PUBLIC_SIGNALING_PORT || 3001;
-    return `ws://localhost:${localPort}`;
+  // Check if running in a browser environment first
+  if (typeof window === 'undefined') {
+      // Return a dummy value or handle server-side case appropriately
+      // This function should only be effectively called client-side anyway
+      console.warn('getWebSocketURL called server-side, returning placeholder.');
+      return 'ws://server-side-placeholder'; 
   }
-  // For deployment, derive WebSocket URL from the window location
-  // Use wss:// for secure connection on deployed environments
-  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const host = window.location.host; // Includes hostname and port (if any)
-  return `${protocol}//${host}`;
+
+  // Local Development Check
+  if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+    const localPort = process.env.NEXT_PUBLIC_SIGNALING_PORT || 3001;
+    console.log(`WS URL (local): ws://localhost:${localPort}`);
+    return `ws://localhost:${localPort}`; 
+  }
+
+  // --- Deployed Environment Logic --- 
+  // Use the environment variable set during deployment (e.g., in Netlify)
+  const signalingServerUrl = process.env.NEXT_PUBLIC_SIGNALING_SERVER_URL;
+  
+  if (!signalingServerUrl) {
+     console.error(
+       "CRITICAL: Environment variable NEXT_PUBLIC_SIGNALING_SERVER_URL is not defined! " +
+       "Ensure it is set in your deployment environment (e.g., Netlify site settings). " +
+       "Falling back to a non-functional URL."
+     );
+     // Return a non-functional placeholder to make the error obvious
+     return 'wss://error-signaling-url-not-set'; 
+  }
+
+  // Ensure the URL uses the wss:// protocol for secure WebSocket connections
+  let wsUrl = signalingServerUrl;
+  if (wsUrl.startsWith('https://')) {
+    wsUrl = wsUrl.replace(/^https/, 'wss');
+  } else if (wsUrl.startsWith('http://')) {
+    // Less common, but handle if someone mistakenly puts http
+    console.warn('Signaling URL starts with http://, converting to wss://. Ensure your Render service uses HTTPS.');
+    wsUrl = wsUrl.replace(/^http/, 'wss');
+  } else if (!wsUrl.startsWith('wss://')) {
+    // If it doesn't start with wss:// or https://, prepend wss://
+    console.warn("Signaling URL doesn't start with wss://, prepending automatically.");
+    wsUrl = `wss://${wsUrl}`;
+  }
+
+  console.log(`WS URL (deployed): ${wsUrl}`);
+  return wsUrl;
 };
 
 
