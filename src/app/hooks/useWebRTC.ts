@@ -168,10 +168,18 @@ export function useWebRTC({
       peerRemoverRef.current = removePeer;
   }, [removePeer]);
 
+  // Placeholder stable callbacks for useWebSocket if needed
+  const stableOnWebSocketError = useCallback(() => { /* TODO: Implement */ }, []);
+  const stableOnWebSocketOpen = useCallback(() => { /* TODO: Implement */ }, []);
+  const stableOnWebSocketClose = useCallback(() => { /* TODO: Implement */ }, []);
+
   // --- WebSocket Handling ---
   const handleWebSocketMessage = useCallback((message: { type: string; payload: unknown }) => {
     console.log('WebRTC hook received WS message:', message);
     const { type, payload } = message;
+
+    // Get current user ID safely
+    const currentUserId = userIdRef.current;
 
     // Get stable functions from refs
     const creator = peerCreatorRef.current;
@@ -179,17 +187,18 @@ export function useWebRTC({
 
     switch (type) {
       case 'existing_room': {
-        // Called when *we* join a room with existing users
-        // Type assertion/check for payload structure
         const data = payload as { userIds: string[] }; 
         if (data && Array.isArray(data.userIds)) {
             const { userIds } = data;
             console.log(`Found existing users: ${userIds.join(', ')}`);
-            if (localStream && userIdRef.current) {
+            if (currentUserId) {
                 userIds.forEach((peerId: string) => {
-                    if (peerId === userIdRef.current) return; // Don't connect to self
+                    if (peerId === currentUserId) return; // Don't connect to self
+                    // createPeer internally checks for localStream
                     creator(peerId, true); // Use creator ref
                 });
+            } else {
+                console.warn('Cannot create peers for existing room: User ID not set yet.');
             }
         } else {
              console.warn('Received malformed existing_room payload:', payload);
@@ -197,15 +206,17 @@ export function useWebRTC({
         break;
       }
       case 'user_joined': {
-        // Called when a *new* user joins the room we are already in
         const data = payload as { userId: string };
         if (data && typeof data.userId === 'string') {
             const { userId: newPeerId } = data;
             console.log(`User joined: ${newPeerId}`);
-            if (localStream && userIdRef.current && newPeerId !== userIdRef.current) {
-                // We don't initiate connection here, the newcomer will send the offer
-                // Create peer instance, but set initiator to false
-                creator(newPeerId, false); // Use creator ref
+            if (currentUserId && newPeerId !== currentUserId) {
+                 // We don't initiate connection here, the newcomer will send the offer
+                 // Create peer instance, but set initiator to false
+                 // createPeer internally checks for localStream
+                 creator(newPeerId, false); // Use creator ref
+            } else if (!currentUserId) {
+                 console.warn('Cannot create peer for new user: User ID not set yet.');
             }
         } else {
             console.warn('Received malformed user_joined payload:', payload);
@@ -260,16 +271,19 @@ export function useWebRTC({
       default:
         console.warn(`Unhandled WebSocket message type: ${type}`);
     }
-  }, [localStream]); // No longer depends on sendMessage
+  }, []); // Empty dependency array makes this callback stable
 
   const { sendMessage, connectionState: webSocketState } = useWebSocket({
     onMessage: handleWebSocketMessage,
-    // Optional: Add onOpen, onClose, onError handlers for more detailed feedback
+    onError: stableOnWebSocketError,
+    onOpen: stableOnWebSocketOpen,
+    onClose: stableOnWebSocketClose,
+    // Add other handlers as needed
   });
 
-  // Update the sendMessage ref whenever the sendMessage function from useWebSocket changes
+  // Ensure the ref for sendMessage is updated when the hook provides it
   useEffect(() => {
-      wsSendMessageRef.current = sendMessage;
+    wsSendMessageRef.current = sendMessage;
   }, [sendMessage]);
 
   // --- Room Join/Leave Logic ---
