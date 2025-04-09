@@ -38,6 +38,56 @@ const VideoPlayer = ({ stream, muted = false, className = '' }: { stream: MediaS
   );
 };
 
+const LogWindow = ({
+  logs,
+  onClose,
+  onGetStats,
+}: {
+  logs: { type: 'log' | 'error' | 'warn', message: string, timestamp: number }[];
+  onClose: () => void;
+  onGetStats: () => void;
+}) => {
+  const logContentRef = useRef<HTMLDivElement>(null);
+
+  // Scroll to bottom when logs update
+  useEffect(() => {
+    if (logContentRef.current) {
+      logContentRef.current.scrollTop = logContentRef.current.scrollHeight;
+    }
+  }, [logs]);
+
+  const formatTimestamp = (timestamp: number) => {
+    const date = new Date(timestamp);
+    return `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}:${date.getSeconds().toString().padStart(2, '0')}.${date.getMilliseconds().toString().padStart(3, '0')}`;
+  };
+
+  return (
+    <div className="log-window">
+      <div className="log-header">
+        <h3>Console Logs & Stats</h3>
+        <button onClick={onGetStats} className="stats-button" title="Fetch WebRTC Stats">
+          Get Stats
+        </button>
+        <button onClick={onClose} className="close-log-button" title="Close Logs">
+          &times;
+        </button>
+      </div>
+      <div className="log-content" ref={logContentRef}>
+        {logs.length === 0 ? (
+          <p className="no-logs">No logs yet.</p>
+        ) : (
+          logs.map((log, index) => (
+            <div key={index} className={`log-entry log-${log.type}`}>
+              <span className="log-timestamp">{formatTimestamp(log.timestamp)}</span>
+              <span className={`log-message`}>{log.message}</span>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+};
+
 export default function Home() {
   const [roomId, setRoomId] = useState('');
   const [userId, setUserId] = useState('');
@@ -485,6 +535,15 @@ export default function Home() {
           </div>
         )}
       </main>
+
+      {/* Conditionally render the Log Window */}
+      {showLogs && (
+          <LogWindow
+              logs={logs}
+              onClose={() => setShowLogs(false)}
+              onGetStats={logPeerStats} // Pass the enhanced function
+          />
+      )}
 
       {/* Global styles and component-specific styles */}
       <style jsx>{`
