@@ -56,6 +56,11 @@ const RESOLUTION_PRESETS: ResolutionPreset[] = [
 const DEFAULT_RESOLUTION_INDEX = 1; // Default to 480p
 // ------------------------
 
+// --- Frame Rate Presets ---
+const FRAME_RATE_PRESETS: number[] = [15, 30, 60];
+const DEFAULT_FRAME_RATE_INDEX = 1; // Default to 30fps
+// -------------------------
+
 export default function Home() {
   const [roomId, setRoomId] = useState('');
   const [userId, setUserId] = useState('');
@@ -86,6 +91,8 @@ export default function Home() {
 
   // New state for resolution
   const [currentResolutionIndex, setCurrentResolutionIndex] = useState<number>(DEFAULT_RESOLUTION_INDEX);
+  // New state for frame rate
+  const [currentFrameRateIndex, setCurrentFrameRateIndex] = useState<number>(DEFAULT_FRAME_RATE_INDEX);
 
   // Helper function to add logs
   const addLog = useCallback((type: 'log' | 'error' | 'warn', ...args: unknown[]) => {
@@ -188,30 +195,35 @@ export default function Home() {
   };
   // -------------------------------
 
-  // --- Debounced Resolution Update ---
-  const applyResolutionConstraints = useDebouncedCallback(
-    async (presetIndex: number) => {
+  // --- Debounced Video Constraint Update (Combined Resolution & FPS) ---
+  const applyVideoTrackConstraints = useDebouncedCallback(
+    async () => {
+      // Read current state values INSIDE the debounced function
+      const resIndex = currentResolutionIndex;
+      const fpsIndex = currentFrameRateIndex;
+
       if (!localStream) {
-        console.warn('Cannot apply resolution: No local stream.');
+        console.warn('Cannot apply constraints: No local stream.');
         return;
       }
       const videoTrack = localStream.getVideoTracks()[0];
       if (!videoTrack) {
-        console.warn('Cannot apply resolution: No video track found.');
+        console.warn('Cannot apply constraints: No video track found.');
         return;
       }
 
-      const selectedPreset = RESOLUTION_PRESETS[presetIndex];
-      if (!selectedPreset) {
-          console.error(`Invalid resolution preset index: ${presetIndex}`);
+      const selectedPreset = RESOLUTION_PRESETS[resIndex];
+      const selectedFps = FRAME_RATE_PRESETS[fpsIndex];
+
+      if (!selectedPreset || selectedFps === undefined) {
+          console.error(`Invalid resolution/FPS preset index: Res ${resIndex}, FPS ${fpsIndex}`);
           return;
       }
 
       const constraints: MediaTrackConstraints = {
         width: { ideal: selectedPreset.width },
         height: { ideal: selectedPreset.height },
-        // You could also add frameRate here if desired
-        // frameRate: { ideal: 30 }
+        frameRate: { ideal: selectedFps }
       };
 
       console.log(`Attempting to apply video constraints: ${JSON.stringify(constraints)}`);
@@ -221,20 +233,30 @@ export default function Home() {
       } catch (error) {
         console.error('Failed to apply video constraints:', error);
         // Optionally revert state or show error to user
-        // For simplicity, we don't revert slider state here
+        // setError(`Failed to apply constraints: ${error.message}. Check device support.`);
       }
     },
-    500 // Debounce for 500ms (applying constraints can be slower)
+    500 // Debounce for 500ms
   );
 
+  // Update resolution slider handler
   const handleResolutionChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const newIndex = parseInt(event.target.value, 10);
     setCurrentResolutionIndex(newIndex);
-    applyResolutionConstraints(newIndex);
+    // Trigger the combined constraint application
+    applyVideoTrackConstraints();
+  };
+
+  // New frame rate slider handler
+  const handleFrameRateChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const newIndex = parseInt(event.target.value, 10);
+    setCurrentFrameRateIndex(newIndex);
+    // Trigger the combined constraint application
+    applyVideoTrackConstraints();
   };
   // ---------------------------------
 
-  // Get user media - Now uses the currentResolutionIndex state
+  // Get user media - Now uses the current resolution AND frame rate state
   const getMedia = useCallback(async (audio = true, video = true): Promise<MediaStream> => {
     setError(null);
     try {
@@ -247,10 +269,11 @@ export default function Home() {
       }
       if (video) {
           const selectedPreset = RESOLUTION_PRESETS[currentResolutionIndex];
+          const selectedFps = FRAME_RATE_PRESETS[currentFrameRateIndex];
           constraints.video = {
               width: { ideal: selectedPreset.width },
               height: { ideal: selectedPreset.height },
-              // frameRate: { ideal: 30 } // Optional: Add default frameRate
+              frameRate: { ideal: selectedFps } // Add default frameRate
           };
           console.log('Using initial video constraints:', constraints.video);
       }
@@ -273,8 +296,8 @@ export default function Home() {
       setLocalStream(null);
       throw new Error(userFriendlyError);
     }
-  // Add currentResolutionIndex dependency
-  }, [localStream, currentResolutionIndex]);
+  // Add currentFrameRateIndex dependency
+  }, [localStream, currentResolutionIndex, currentFrameRateIndex]);
 
   // Set default userId on component mount (client-side only)
   useEffect(() => {
@@ -643,7 +666,7 @@ export default function Home() {
             </div>
 
             {/* --- Controls --- */}
-            <div className="bg-gray-800 p-3 rounded-lg shadow-md flex flex-wrap items-center justify-center gap-4">
+            <div className="bg-gray-800 p-3 rounded-lg shadow-md flex flex-wrap items-center justify-center gap-x-4 gap-y-2"> {/* Adjusted gap */}
               {/* Mute/Unmute Mic */}
               <button
                 onClick={toggleMic}
@@ -708,6 +731,24 @@ export default function Home() {
                   aria-label="Video resolution"
                 />
                 <span className="w-12 text-right font-mono">{RESOLUTION_PRESETS[currentResolutionIndex]?.label || 'N/A'}</span>
+              </div>
+              {/* ------------------------------ */}
+
+              {/* --- Frame Rate Slider Control --- */}
+              <div className="flex items-center gap-2 text-sm">
+                <label htmlFor="fpsSlider" className="whitespace-nowrap">FPS:</label>
+                <input
+                  type="range"
+                  id="fpsSlider"
+                  min={0}
+                  max={FRAME_RATE_PRESETS.length - 1}
+                  step={1}
+                  value={currentFrameRateIndex}
+                  onChange={handleFrameRateChange}
+                  className="w-20 h-2 bg-gray-600 rounded-lg appearance-none cursor-pointer accent-red-500"
+                  aria-label="Video frame rate"
+                />
+                <span className="w-10 text-right font-mono">{FRAME_RATE_PRESETS[currentFrameRateIndex]}</span>
               </div>
               {/* ------------------------------ */}
 
