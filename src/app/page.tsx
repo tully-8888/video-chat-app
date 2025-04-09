@@ -3,9 +3,10 @@
 import React from 'react';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useWebRTC } from './hooks/useWebRTC';
+import type { Instance as PeerInstance } from 'simple-peer'; // Import PeerInstance type
 
 // Simple Video Player Component
-const VideoPlayer = ({ stream, muted = false }: { stream: MediaStream | null, muted?: boolean }) => {
+const VideoPlayer = ({ stream, muted = false, className = '' }: { stream: MediaStream | null, muted?: boolean, className?: string }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
@@ -19,17 +20,16 @@ const VideoPlayer = ({ stream, muted = false }: { stream: MediaStream | null, mu
   return (
     <video
       ref={videoRef}
+      className={className}
       autoPlay
       playsInline // Important for mobile browsers
       muted={muted}
-      style={{ 
-        width: '300px', 
-        // height: '225px', // Use aspectRatio for better responsiveness
-        aspectRatio: '4 / 3', 
-        margin: '5px', 
-        border: '1px solid #ccc', 
+      style={{
+        display: 'block',
+        width: '100%',
+        height: '100%',
+        objectFit: 'cover',
         backgroundColor: 'black',
-        borderRadius: '4px'
       }}
       onError={(event) => {
         console.error("Video Player Error:", event);
@@ -44,9 +44,76 @@ export default function Home() {
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isJoining, setIsJoining] = useState(false); // Prevent multiple join attempts
-
-  // State specifically for remote streams managed by the hook's callbacks
   const [remoteStreams, setRemoteStreams] = useState<Map<string, MediaStream>>(new Map());
+  const [isMicMuted, setIsMicMuted] = useState(false);
+  const [isVideoStopped, setIsVideoStopped] = useState(false);
+
+  // --- Debugging State ---
+  const [logs, setLogs] = useState<{ type: 'log' | 'error' | 'warn', message: string, timestamp: number }[]>([]);
+  const [showLogs, setShowLogs] = useState(false); // State to control log window visibility
+  // -----------------------
+
+  // New state for call statistics
+  const [callStats, setCallStats] = useState<{
+    totalSent: string;
+    totalReceived: string; 
+    currentBitrate: string;
+    packetLoss: string;
+  } | null>(null);
+
+  // Helper function to add logs
+  const addLog = useCallback((type: 'log' | 'error' | 'warn', ...args: unknown[]) => {
+    // Simple serialization for objects
+    const message = args.map(arg => {
+        try {
+            if (arg instanceof Error) return arg.message;
+            if (typeof arg === 'object' && arg !== null) return JSON.stringify(arg);
+            if (typeof arg === 'string') return arg;
+            if (typeof arg === 'number' || typeof arg === 'boolean' || typeof arg === 'undefined' || typeof arg === 'symbol' || typeof arg === 'bigint') return String(arg);
+            if (arg === null) return 'null';
+             return typeof arg;
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        } catch (_error) {
+            return '[Unserializable]';
+        }
+    }).join(' ');
+
+    setLogs(prevLogs => [
+        ...prevLogs.slice(-100), // Keep only the last 100 logs
+        {
+            type,
+            message,
+            timestamp: Date.now()
+        }
+    ]);
+  }, []); // No dependencies, safe to keep empty
+
+  // Override console methods to capture logs
+  useEffect(() => {
+    const originalLog = console.log;
+    const originalError = console.error;
+    const originalWarn = console.warn;
+
+    console.log = (...args) => {
+      originalLog.apply(console, args);
+      addLog('log', ...args);
+    };
+    console.error = (...args) => {
+      originalError.apply(console, args);
+      addLog('error', ...args);
+    };
+    console.warn = (...args) => {
+      originalWarn.apply(console, args);
+      addLog('warn', ...args);
+    };
+
+    // Cleanup: Restore original methods on unmount
+    return () => {
+      console.log = originalLog;
+      console.error = originalError;
+      console.warn = originalWarn;
+    };
+  }, [addLog]); // Depend on addLog
 
   const handleRemoteStream = useCallback((peerId: string, stream: MediaStream) => {
     console.log('New remote stream received from:', peerId);
@@ -67,7 +134,8 @@ export default function Home() {
     joinRoom: rtcJoinRoom, 
     leaveRoom: rtcLeaveRoom, 
     isJoined, 
-    webSocketState
+    webSocketState,
+    peers
   } = useWebRTC({
     localStream,
     onRemoteStream: handleRemoteStream,
@@ -75,104 +143,111 @@ export default function Home() {
   });
   // -------------------------------------
 
-  // Get user media
-  const getMedia = useCallback(async (audio = true, video = true) => {
+  // Get user media - Now returns the stream or throws error
+  const getMedia = useCallback(async (audio = true, video = true): Promise<MediaStream> => {
     setError(null);
     try {
       console.log(`Requesting local media... Audio: ${audio}, Video: ${video}`);
+      // Stop existing tracks *before* getting new ones
       localStream?.getTracks().forEach(track => track.stop());
-      
+
       const constraints = { audio, video };
       if (!audio && !video) {
-        setLocalStream(null); 
-        console.log('Cleared local media as audio and video are false.');
-        return; 
+          setLocalStream(null);
+          console.log('Cleared local media as audio and video are false.');
+          // Technically shouldn't happen in the join flow, but handle defensively
+          throw new Error("Cannot get media with audio and video both false.");
       }
-      
+
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
       console.log('Local media obtained:', stream.id);
-      setLocalStream(stream);
+      setLocalStream(stream); // Set the state
+      return stream; // Return the obtained stream
     } catch (err) {
       console.error('Failed to get local stream:', err);
       const errorMessage = err instanceof Error ? err.message : String(err);
-      setError(`Failed to get camera/microphone: ${errorMessage}. Please check permissions.`);
-      setLocalStream(null); 
+      const userFriendlyError = `Failed to get camera/microphone: ${errorMessage}. Please check permissions.`;
+      setError(userFriendlyError);
+      setLocalStream(null);
+      throw new Error(userFriendlyError); // Re-throw to stop the join process
     }
-  }, [localStream]);
+  }, [localStream]); // Keep localStream dependency for cleanup
 
-  // Automatically get media and set default userId on component mount
+  // Set default userId on component mount (client-side only)
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-        // Generate default userId only on the client after mount
-        if (!userId) { // Only set if not already set (e.g., by user input)
-             setUserId(`user_${Math.random().toString(36).substring(2, 9)}`);
-        }
-        // Call getMedia, but don't make the effect depend on it
-        getMedia(); 
+    if (typeof window !== 'undefined' && !userId) {
+        setUserId(`user_${Math.random().toString(36).substring(2, 9)}`);
     }
-    // Cleanup function should still run on actual unmount
-    return () => {
-      console.log('Cleaning up local stream on unmount');
-      // Use ref or access localStream directly - need to be careful here
-      // Accessing state directly in cleanup can be stale.
-      // Let's rely on the getMedia function itself to handle stopping previous tracks.
-      // The primary cleanup is handled when the component *actually* unmounts.
-      // We might need a ref to the stream for robust cleanup if needed later.
-    }
-  // Run only once on mount
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // Empty dependency array ensures this runs only ONCE on mount
+    // NO LONGER CALLS getMedia here
 
-  const handleJoinRoom = () => {
+    // Cleanup function: stop tracks if component unmounts unexpectedly
+    // Use a ref to the stream for reliable cleanup
+    const streamRef = { current: localStream }; 
+    return () => {
+      console.log('Cleaning up local stream on unmount/re-render');
+      streamRef.current?.getTracks().forEach(track => track.stop());
+    }
+  // localStream dependency ensures ref is updated if stream changes
+  // userId dependency ensures effect runs if userId changes externally
+  }, [userId, localStream]); 
+
+  const handleJoinRoom = async () => { // Make async
     if (!roomId.trim() || !userId.trim()) {
       setError('Please enter both Room ID and User ID.');
       return;
     }
-    if (!localStream) {
-      // Try getting media again if missing
-      console.log('Local stream missing, attempting to get media again...')
-      getMedia().then(() => {
-          // Check again after attempting to get media
-          if (!localStream) {
-             setError('Cannot join room: Local media (camera/mic) not available. Please grant permissions and refresh.');
-             return;
-          }
-          // If media acquired now, proceed to join (check WS state etc.)
-          proceedToJoin(); 
-      }).catch(err => {
-          console.error('Error trying to get media again:', err);
-          setError('Failed to acquire camera/microphone for joining.');
-      });
-      return; // Exit for now, let the async getMedia handle it
+    if (webSocketState !== 'OPEN') {
+      setError('Cannot join room: Not connected to signaling server.');
+      return;
     }
-    // If localStream exists, proceed directly
-    proceedToJoin();
+    if (isJoining || isJoined) {
+      console.warn('Already joining or joined.');
+      return;
+    }
+
+    setError(null);
+    setIsJoining(true); 
+
+    try {
+        console.log('Attempting to get media before joining...');
+        const stream = await getMedia(); // Await media access HERE
+        
+        if (!stream) { 
+             // Should be caught by getMedia's throw, but double-check
+             throw new Error('Media stream not available after request.');
+        }
+
+        // If media acquired, proceed to join
+        console.log(`Media acquired, calling rtcJoinRoom for room: ${roomId}, user: ${userId}`);
+        // Call the join function from the hook, passing roomId and userId
+        // The hook uses the `localStream` state variable which `getMedia` updated.
+        rtcJoinRoom({ roomId, userId });
+        // `isJoined` state from the hook will eventually set isJoining to false
+
+    } catch (err) {
+        console.error('Failed to join room (likely media error):', err);
+        // setError should have been set within getMedia
+        if (!error) { // Set a generic error if getMedia didn't
+             setError('Failed to join room. Could not access camera/microphone.');
+        }
+        setIsJoining(false); // Stop joining attempt on error
+    }
   };
 
-  // Helper function to contain the joining logic after checks
-  const proceedToJoin = () => {
-      if (webSocketState !== 'OPEN') {
-        setError('Cannot join room: Not connected to signaling server.');
-        return;
-      }
-      if (isJoining || isJoined) {
-        console.warn('Already joining or joined.');
-        return;
-      }
-      
-      setError(null);
-      setIsJoining(true); 
-      console.log(`Calling rtcJoinRoom for room: ${roomId}, user: ${userId}`);
-      // Call the join function from the hook, passing roomId and userId
-      rtcJoinRoom({ roomId, userId }); 
-      // We don't setIsJoining(false) here immediately,
-      // rely on isJoined from the hook to update the UI state
-  };
+  // Remove the separate proceedToJoin function, logic is now in handleJoinRoom
+  // const proceedToJoin = () => { ... }; 
 
   const handleLeaveRoom = () => {
     rtcLeaveRoom();
     setIsJoining(false); // Reset joining state
     setRemoteStreams(new Map()); // Clear remote streams on leave
+    // Reset mute/video state visually on leave
+    setIsMicMuted(false);
+    setIsVideoStopped(false);
+    // Optionally stop local stream tracks on leave
+    localStream?.getTracks().forEach(track => track.stop());
+    setLocalStream(null); // Clear local stream state
+    setShowLogs(false); // Hide logs on leaving room
   };
   
   // Update joining status based on hook state
@@ -182,134 +257,787 @@ export default function Home() {
     }
   }, [isJoined]);
 
-  return (
-    <main style={{ padding: '20px', fontFamily: 'sans-serif', maxWidth: '1200px', margin: 'auto' }}>
-      <h1 style={{ textAlign: 'center', marginBottom: '30px' }}>Simple P2P Video Chat</h1>
+  // Toggle Mic
+  const toggleMic = useCallback(() => {
+    if (localStream) {
+        let muted = false;
+        localStream.getAudioTracks().forEach(track => {
+            track.enabled = !track.enabled;
+            muted = !track.enabled; // Update based on the new state
+        });
+        setIsMicMuted(muted);
+        // No need to create a new stream object just for state update
+        // setLocalStream(new MediaStream(localStream.getTracks()));
+    }
+  }, [localStream]);
 
-      {error && (
-          <p style={{ color: '#dc3545', backgroundColor: '#f8d7da', border: '1px solid #f5c6cb', padding: '10px', borderRadius: '4px', marginBottom: '15px' }}>
-             <strong>Error:</strong> {error}
-          </p>
-      )}
-      <p style={{ textAlign: 'center', marginBottom: '20px', fontSize: '0.9em', color: 'var(--foreground-muted, #888888)' }}>
-        WebSocket Status: <span style={{ fontWeight: 'bold' }}>{webSocketState}</span>
-      </p>
-      
-      {!isJoined ? (
-        <div style={{ marginBottom: '20px', padding: '20px', border: '1px solid var(--border, #333)', borderRadius: '8px', backgroundColor: 'var(--background-secondary, #222)' }}>
-          <h2 style={{ marginTop: '0', marginBottom: '15px', color: 'var(--foreground, #EAEAEA)' }}>Join a Room</h2>
-          <div style={{ display: 'flex', gap: '10px', marginBottom: '15px' }}>
-             <input
-               type="text"
-               placeholder="Room ID"
-               value={roomId}
-               onChange={(e) => setRoomId(e.target.value)}
-               disabled={isJoining}
-               style={{ padding: '10px', border: '1px solid var(--border, #333)', borderRadius: '4px', flexGrow: 1, backgroundColor: 'var(--background-input, #333)', color: 'var(--foreground, #EAEAEA)' }}
-             />
-             <input
-               type="text"
-               placeholder="Your User ID"
-               value={userId}
-               onChange={(e) => setUserId(e.target.value)}
-               disabled={isJoining}
-               style={{ padding: '10px', border: '1px solid var(--border, #333)', borderRadius: '4px', flexGrow: 1, backgroundColor: 'var(--background-input, #333)', color: 'var(--foreground, #EAEAEA)' }}
-             />
-          </div>
-          <button 
-            onClick={handleJoinRoom} 
-            disabled={webSocketState !== 'OPEN' || isJoining}
-            style={{ 
-                padding: '10px 20px', 
-                cursor: (webSocketState !== 'OPEN' || isJoining) ? 'not-allowed' : 'pointer',
-                backgroundColor: (webSocketState !== 'OPEN' || isJoining) ? 'var(--background-disabled, #555)' : 'var(--accent, #3b82f6)',
-                color: (webSocketState !== 'OPEN' || isJoining) ? 'var(--foreground-muted, #999)' : 'white',
-                border: 'none',
-                borderRadius: '4px',
-                fontSize: '1em' 
-            }}
-          >
-            {isJoining ? 'Joining...' : 'Join Room'}
-          </button>
-          {webSocketState === 'CONNECTING' && <p style={{ marginTop: '10px', color: 'var(--foreground-muted, #888888)' }}>Connecting to server...</p>}
-          {webSocketState !== 'OPEN' && webSocketState !== 'CONNECTING' && <p style={{ marginTop: '10px', color: 'var(--color-error, #f87171)' }}>Cannot connect to signaling server. Please ensure it is running.</p>}
-          {!localStream && webSocketState === 'OPEN' && <p style={{ marginTop: '10px', color: 'var(--color-warning, #fbbf24)' }}>Waiting for camera/microphone access...</p>}
-        </div>
-      ) : (
-        <div style={{ marginBottom: '20px', padding: '15px', border: '1px solid var(--border, #333)', borderRadius: '8px', backgroundColor: 'var(--background-secondary, #222)' }}>
-          <p style={{ color: 'var(--foreground, #EAEAEA)' }}>Joined Room: <strong style={{ color: 'var(--accent, #3b82f6)' }}>{roomId}</strong> as <strong style={{ color: 'var(--accent, #3b82f6)' }}>{userId}</strong></p>
-          <button onClick={handleLeaveRoom} style={{ 
-             padding: '8px 15px', 
-             cursor: 'pointer', 
-             backgroundColor: 'var(--color-error, #ef4444)',
-             color: 'white', 
-             border: 'none', 
-             borderRadius: '4px',
-             marginTop: '10px'
-          }}>
-            Leave Room
-          </button>
-        </div>
-      )}
+  // Toggle Video
+  const toggleVideo = useCallback(() => {
+    if (localStream) {
+        let stopped = false;
+        localStream.getVideoTracks().forEach(track => {
+            track.enabled = !track.enabled;
+            stopped = !track.enabled; // Update based on the new state
+        });
+        setIsVideoStopped(stopped);
+        // No need to create a new stream object just for state update
+        // setLocalStream(new MediaStream(localStream.getTracks()));
+    }
+  }, [localStream]);
 
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', justifyContent: 'center' }}>
-        {/* Local Video */}
-        <div style={{ textAlign: 'center' }}>
-          <h3 style={{ marginBottom: '5px', color: 'var(--foreground, #EAEAEA)' }}>You ({userId.substring(0,8)}...)</h3>
-          <VideoPlayer stream={localStream} muted={true} />
-          {/* Add Mute/Video Toggle Buttons */}
-          {localStream && (
-              <div style={{ marginTop: '10px' }}>
-                  <button 
-                      onClick={() => {
-                          localStream.getAudioTracks().forEach(track => track.enabled = !track.enabled);
-                          setLocalStream(new MediaStream(localStream.getTracks())); 
-                      }} 
-                      style={{ 
-                          marginRight: '5px', 
-                          padding: '5px 10px',
-                          border: '1px solid var(--border, #333)',
-                          borderRadius: '4px',
-                          backgroundColor: 'var(--background-secondary, #222)',
-                          color: 'var(--foreground, #EAEAEA)',
-                          cursor: 'pointer'
-                      }}
-                  >
-                      {localStream.getAudioTracks().some(track => track.enabled) ? 'Mute Mic' : 'Unmute Mic'}
-                  </button>
-                  <button 
-                     onClick={() => {
-                          localStream.getVideoTracks().forEach(track => track.enabled = !track.enabled);
-                          setLocalStream(new MediaStream(localStream.getTracks())); 
-                      }}
-                      style={{ 
-                          padding: '5px 10px',
-                          border: '1px solid var(--border, #333)',
-                          borderRadius: '4px',
-                          backgroundColor: 'var(--background-secondary, #222)',
-                          color: 'var(--foreground, #EAEAEA)',
-                          cursor: 'pointer'
-                      }}
-                  >
-                      {localStream.getVideoTracks().some(track => track.enabled) ? 'Stop Video' : 'Start Video'}
-                  </button>
+  // Determine layout state for easier conditional rendering
+  const mainRemoteStreamEntry = remoteStreams.size > 0 ? [...remoteStreams.entries()][0] : null;
+  // const mainRemotePeerId = mainRemoteStreamEntry ? mainRemoteStreamEntry[0] : null; // Removed as unused
+  const mainRemoteStream = mainRemoteStreamEntry ? mainRemoteStreamEntry[1] : null;
+  const otherRemoteStreams = remoteStreams.size > 1 ? [...remoteStreams.entries()].slice(1) : [];
+
+  // Function to get and log WebRTC stats
+  const logPeerStats = useCallback(async () => {
+    if (!isJoined || peers.size === 0) {
+      addLog('warn', 'Cannot get stats: Not in a room or no peers connected.');
+      setCallStats(null); // Clear stats if not joined or no peers
+      return;
+    }
+
+    addLog('log', '--- Fetching WebRTC Stats ---');
+
+    // Initialize aggregators outside the loop
+    let totalAggregatedSent = 0;
+    let totalAggregatedReceived = 0;
+    let totalAggregatedBitrate = 0;
+    let totalAggregatedPacketLoss = 0;
+    let peerCount = 0; // To average packet loss later
+
+    for (const [peerId, peerData] of peers.entries()) {
+      if (peerData.peer) {
+        try {
+          const pc = (peerData.peer as PeerInstance & { _pc: RTCPeerConnection })._pc;
+          const stats = await pc.getStats();
+
+          // Use unique names for variables within this peer's scope
+          let currentPeerBytesSent = 0;
+          let currentPeerBytesReceived = 0;
+          let currentPeerBitrate = 0;
+          let currentPeerAvailableBitrate = 0;
+          let currentPeerPacketLoss = 0;
+
+          stats.forEach(report => {
+            // Track cumulative bytes for this peer
+            if (report.type === 'outbound-rtp') {
+              currentPeerBytesSent += report.bytesSent || 0;
+            }
+            if (report.type === 'inbound-rtp') {
+              currentPeerBytesReceived += report.bytesReceived || 0;
+            }
+
+            // Track connection quality for this peer
+            if (report.type === 'candidate-pair' && report.nominated) {
+              currentPeerBitrate = report.availableOutgoingBitrate || 0;
+              currentPeerAvailableBitrate = report.availableIncomingBitrate || 0;
+              currentPeerPacketLoss = report.requestsReceived && report.responsesReceived ?
+                ((report.requestsReceived - report.responsesReceived) / report.requestsReceived) * 100 : 0;
+            }
+          });
+
+          // Convert units for this peer
+          const sentMB = currentPeerBytesSent / (1024 * 1024);
+          const receivedMB = currentPeerBytesReceived / (1024 * 1024);
+          const currentMbps = currentPeerBitrate / 1e6; // This is fine as a const per peer calculation
+          const availableMbps = currentPeerAvailableBitrate / 1e6;
+
+          addLog('log', `Peer ${peerId.substring(0, 6)}:
+  Total Sent: ${sentMB.toFixed(2)} MB
+  Total Received: ${receivedMB.toFixed(2)} MB
+  Current Bitrate: ${currentMbps.toFixed(2)} Mbps
+  Available Bitrate: ${availableMbps.toFixed(2)} Mbps
+  Packet Loss: ${currentPeerPacketLoss.toFixed(2)}%`);
+
+          // Aggregate stats from this peer
+          totalAggregatedSent += sentMB;
+          totalAggregatedReceived += receivedMB;
+          totalAggregatedBitrate += currentMbps; // Summing bitrates across peers
+          totalAggregatedPacketLoss += currentPeerPacketLoss;
+          peerCount++;
+
+        } catch (error) {
+          addLog('error', `Failed to get stats for peer ${peerId}: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+    }
+
+    addLog('log', '--- Finished Fetching Stats ---');
+
+    // Calculate average packet loss if there are peers
+    const avgPacketLoss = peerCount > 0 ? totalAggregatedPacketLoss / peerCount : 0;
+
+    // Set the aggregated stats state *after* the loop finishes
+    setCallStats({
+      totalSent: totalAggregatedSent.toFixed(2) + ' MB',
+      totalReceived: totalAggregatedReceived.toFixed(2) + ' MB',
+      // Displaying the sum of bitrates. Could be changed to average if preferred.
+      currentBitrate: totalAggregatedBitrate.toFixed(2) + ' Mbps', 
+      packetLoss: avgPacketLoss.toFixed(2) + '%' // Displaying average packet loss
+    });
+
+  }, [peers, isJoined, addLog, setCallStats]); // Ensure setCallStats is in the dependency array
+
+  // LogWindow component definition moved inside Home
+  const LogWindow = ({
+    logs: currentLogs, // Renamed prop to avoid conflict with state variable
+    onClose,
+    onGetStats,
+  }: {
+    logs: { type: 'log' | 'error' | 'warn', message: string, timestamp: number }[];
+    onClose: () => void;
+    onGetStats: () => void;
+  }) => {
+    const logContentRef = useRef<HTMLDivElement>(null);
+
+    // Scroll to bottom when logs update
+    useEffect(() => {
+      if (logContentRef.current) {
+        logContentRef.current.scrollTop = logContentRef.current.scrollHeight;
+      }
+    }, [currentLogs]); // Depend on the passed prop
+
+    const formatTimestamp = (timestamp: number) => {
+      const date = new Date(timestamp);
+      return `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}:${date.getSeconds().toString().padStart(2, '0')}.${date.getMilliseconds().toString().padStart(3, '0')}`;
+    };
+
+    return (
+      <div className="log-window">
+        <div className="log-header">
+          <h3>Console Logs & Stats</h3>
+          <button onClick={onGetStats} className="stats-button" title="Fetch WebRTC Stats">
+            Get Stats
+          </button>
+          <button onClick={onClose} className="close-log-button" title="Close Logs">
+            &times;
+          </button>
+        </div>
+        <div className="log-content" ref={logContentRef}>
+          {currentLogs.length === 0 ? (
+            <p className="no-logs">No logs yet. Join a room and click Get Stats.</p>
+          ) : (
+            currentLogs.map((log, index) => (
+              <div key={index} className={`log-entry log-${log.type}`}>
+                <span className="log-timestamp">{formatTimestamp(log.timestamp)}</span>
+                <span className={`log-message`}>{log.message}</span>
               </div>
+            ))
           )}
         </div>
-        
-        {/* Remote Videos */} 
-        {[...remoteStreams.entries()].map(([peerId, stream]) => (
-          <div key={peerId} style={{ textAlign: 'center' }}>
-            <h3 style={{ marginBottom: '5px', color: 'var(--foreground, #EAEAEA)' }}>Peer: {peerId.substring(0, 8)}...</h3>
-            <VideoPlayer stream={stream} />
-          </div>
-        ))}
       </div>
+    );
+  };
 
-       {isJoined && remoteStreams.size === 0 && (
-         <p style={{ marginTop: '20px', textAlign: 'center', color: 'var(--foreground-muted, #888888)' }}>Waiting for others to join the room...</p>
-       )}
+  return (
+    <>
+      <main className={`main-container ${isJoined ? 'in-call' : 'pre-join'}`}>
+        {!isJoined ? (
+          // --- Pre-Join Screen ---
+          <div className="join-container">
+            <h1 className="title">Video Chat</h1>
+            <p className="subtitle">Enter details to join or start a room</p>
 
-    </main>
+            {error && (
+              <p className="error-message">
+                <strong>Error:</strong> {error}
+              </p>
+            )}
+            {/* REMOVED WebSocket status display
+            <p className="ws-status">
+              WebSocket: <span className={`status-${webSocketState.toLowerCase()}`}>{webSocketState}</span>
+            </p>
+            */}
+
+            <div className="input-group">
+              <input
+                type="text"
+                placeholder="Room ID"
+                value={roomId}
+                onChange={(e) => setRoomId(e.target.value)}
+                disabled={isJoining}
+                className="input-field"
+              />
+              <input
+                type="text"
+                placeholder="Your User ID (e.g., Alice)"
+                value={userId}
+                onChange={(e) => setUserId(e.target.value)}
+                disabled={isJoining}
+                className="input-field"
+              />
+            </div>
+            <button
+              onClick={handleJoinRoom}
+              disabled={webSocketState !== 'OPEN' || isJoining || !roomId.trim() || !userId.trim()}
+              className="join-button"
+            >
+              {isJoining ? 'Joining...' : 'Join Room'}
+            </button>
+            {webSocketState === 'CONNECTING' && <p className="status-text">Connecting to server...</p>}
+            {webSocketState !== 'OPEN' && webSocketState !== 'CONNECTING' && <p className="status-text error">Cannot connect to signaling server.</p>}
+            {/* Debug Toggle Button (Pre-Join) */}
+            <button onClick={() => setShowLogs(prev => !prev)} className="debug-toggle-button pre-join-debug">
+                 {showLogs ? 'Hide Logs' : 'Show Logs'}
+            </button>
+          </div>
+
+        ) : (
+          // --- In-Call Screen ---
+          <div className="call-container">
+              {/* Main Video Area (Handles full screen for primary remote/local) */}
+              <div className="main-video-area">
+                 {mainRemoteStream ? (
+                    <VideoPlayer stream={mainRemoteStream} className="main-video" />
+                 ) : (
+                    <VideoPlayer stream={localStream} muted={true} className="main-video local-only local-preview" />
+                 )}
+
+                {/* Local Video (Picture-in-Picture when remote exists) */}
+                {mainRemoteStream && (
+                  <div className="local-pip-container">
+                    <VideoPlayer stream={localStream} muted={true} className="local-pip-video local-preview" />
+                  </div>
+                )}
+             </div>
+
+             {/* Gallery for other remote videos (e.g., on sidebar for desktop) */}
+             {otherRemoteStreams.length > 0 && (
+                 <div className="remote-gallery">
+                     {otherRemoteStreams.map(([peerId, stream]) => (
+                         <div key={peerId} className="gallery-item">
+                             <VideoPlayer stream={stream} className="gallery-video" />
+                             <span className="gallery-peer-id">{peerId.substring(0, 6)}...</span>
+                         </div>
+                     ))}
+                 </div>
+             )}
+
+             {/* Call Info (Could be overlay or top bar) */}
+             <div className="call-info">
+                 Room: <strong>{roomId}</strong> | You: <strong>{userId}</strong>
+                 {callStats && (
+                   <div className="call-stats">
+                     <div>↑ {callStats.totalSent} | ↓ {callStats.totalReceived}</div>
+                     <div>Bitrate: {callStats.currentBitrate} | Loss: {callStats.packetLoss}</div>
+                   </div>
+                 )}
+             </div>
+
+             {/* Loading/Waiting Message */}
+             {remoteStreams.size === 0 && (
+                 <div className="waiting-message">
+                     Waiting for others to join...
+                 </div>
+             )}
+
+
+             {/* Controls Bar */}
+             <div className="controls-bar">
+                <button onClick={toggleMic} className={`control-button ${isMicMuted ? 'muted' : ''}`} title={isMicMuted ? 'Unmute Microphone' : 'Mute Microphone'}>
+                   {/* Mic Icon */}
+                   {isMicMuted ? (
+                       <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="icon">
+                           <path d="M12 1a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3Z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2H3v2a8 8 0 0 0 7 7.93V22h2v-2.07A8 8 0 0 0 21 12v-2h-2Z"></path><line x1="4" x2="20" y1="4" y2="20"></line>
+                       </svg>
+                   ) : (
+                       <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="icon">
+                            <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2H3v2a8 8 0 0 0 7 7.93V22h2v-2.07A8 8 0 0 0 21 12v-2h-2z"></path>
+                       </svg>
+                   )}
+                </button>
+                <button onClick={toggleVideo} className={`control-button ${isVideoStopped ? 'stopped' : ''}`} title={isVideoStopped ? 'Start Video' : 'Stop Video'}>
+                   {/* Video Icon */}
+                   {isVideoStopped ? (
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="icon">
+                            <path d="M16 16v1a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h2m5.66 0H14a2 2 0 0 1 2 2v3.34l1 1L23 7v10"></path><line x1="1" x2="23" y1="1" y2="23"></line>
+                        </svg>
+                   ) : (
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="icon">
+                             <polygon points="23 7 16 12 23 17 23 7"></polygon><rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect>
+                        </svg>
+                   )}
+                </button>
+                <button onClick={handleLeaveRoom} className="control-button leave" title="Leave Call">
+                   {/* Leave Icon (Phone Down) */}
+                   <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="icon">
+                        <path d="M10.68 13.31a16 16 0 0 0 3.41 2.69l1.9-1.9a2 2 0 0 1 2.12 0l2.12 2.12a2 2 0 0 1 0 2.83L18.84 20a18.41 18.41 0 0 1-15.37-15.37l1.42-1.42a2 2 0 0 1 2.82 0l2.12 2.12a2 2 0 0 1 0 2.12L8.69 9.31a16 16 0 0 0 2.69 3.4Z"></path><path d="m22 2-8.5 8.5"></path><path d="M13.5 13.5 2 22"></path>
+                    </svg>
+                </button>
+                {/* Debug Toggle Button (In-Call) */}
+                <button onClick={() => setShowLogs(prev => !prev)} className="control-button debug" title={showLogs ? 'Hide Logs' : 'Show Logs'}>
+                  {/* Logs Icon (File Text) */}
+                   <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="icon">
+                        <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" x2="8" y1="13" y2="13"></line><line x1="16" x2="8" y1="17" y2="17"></line><line x1="10" x2="8" y1="9" y2="9"></line>
+                    </svg>
+                </button>
+             </div>
+          </div>
+        )}
+      </main>
+
+      {/* Conditionally render the Log Window */}
+      {showLogs && (
+          <LogWindow
+              logs={logs}
+              onClose={() => setShowLogs(false)}
+              onGetStats={logPeerStats}
+          />
+      )}
+
+      {/* Global styles and component-specific styles */}
+      <style jsx>{`
+        /* Basic Reset & Theming */
+        :global(body) {
+          margin: 0;
+          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+          background-color: var(--background, #1a1a1a);
+          color: var(--foreground, #eaeaea);
+          overflow: hidden; /* Prevent scrollbars from main page */
+        }
+        :global(:root) {
+            /* Define theme variables if not already globally defined */
+             --background: #121212; /* Slightly darker base */
+             --background-secondary: #1e1e1e; /* Darker card */
+             --background-input: #2c2c2c; /* Slightly lighter input */
+             --foreground: #e0e0e0; /* Slightly softer white */
+             --foreground-muted: #a0a0a0; /* Adjusted muted */
+             --border: #3a3a3a; /* Softer border */
+             --accent: #007aff; /* Apple-like blue */
+             --color-error: #ff3b30; /* Apple-like red */
+             --color-warning: #ff9500; /* Apple-like orange */
+             --color-success: #34c759; /* Apple-like green */
+             --background-disabled: #444;
+             --foreground-disabled: #888;
+        }
+
+        /* Main Container Layouts */
+        .main-container {
+          display: flex;
+          flex-direction: column;
+          height: 100vh;
+          width: 100vw;
+          overflow: hidden;
+        }
+        .main-container.pre-join {
+          justify-content: center;
+          align-items: center;
+          padding: 20px;
+          /* Add a subtle background gradient or image maybe? */
+          background: linear-gradient(135deg, #1a1a1a 0%, #121212 100%);
+        }
+         .main-container.in-call {
+           /* Layout handled by .call-container */
+         }
+
+        /* Pre-Join Screen Styles */
+        .join-container {
+          background-color: var(--background-secondary);
+          padding: 40px 50px; /* Increase padding */
+          border-radius: 16px; /* Larger radius */
+          box-shadow: 0 15px 35px rgba(0, 0, 0, 0.3); /* Deeper shadow */
+          text-align: center;
+          max-width: 480px; /* Slightly wider */
+          width: 100%;
+          border: 1px solid var(--border);
+          transform: scale(1); /* Base for potential animation */
+          transition: transform 0.3s ease-out;
+        }
+        /* Optional: slight scale effect on hover */
+        /* .join-container:hover {
+          transform: scale(1.02);
+        } */
+        .title {
+          margin: 0 0 10px;
+          font-size: 2.8em; /* Larger title */
+          font-weight: 600;
+          color: var(--accent); /* Use accent for title */
+          letter-spacing: -0.5px;
+        }
+        .subtitle {
+          margin: 0 0 35px; /* More space */
+          color: var(--foreground-muted);
+          font-size: 1.1em;
+        }
+        .input-group {
+          display: flex;
+          flex-direction: column;
+          gap: 15px;
+          margin-bottom: 25px;
+        }
+        .input-field {
+          padding: 14px 18px; /* More padding */
+          border: 1px solid var(--border);
+          border-radius: 10px; /* More rounded */
+          background-color: var(--background-input);
+          color: var(--foreground);
+          font-size: 1em;
+          transition: border-color 0.2s ease, box-shadow 0.2s ease;
+        }
+        .input-field:focus {
+          outline: none;
+          border-color: var(--accent);
+          box-shadow: 0 0 0 4px rgba(0, 122, 255, 0.2); /* Accent shadow */
+        }
+        .join-button {
+          padding: 15px 25px; /* Taller button */
+          border: none;
+          border-radius: 10px; /* Match inputs */
+          background-color: var(--accent);
+          color: white;
+          font-size: 1.2em; /* Bigger text */
+          font-weight: 600; /* Bolder text */
+          cursor: pointer;
+          transition: background-color 0.2s ease, opacity 0.2s ease, transform 0.1s ease;
+          width: 100%;
+          margin-top: 10px; /* Space above button */
+        }
+        .join-button:hover:not(:disabled) {
+          background-color: #005bb5; /* Darker accent */
+          transform: translateY(-1px); /* Subtle lift */
+        }
+        .join-button:active:not(:disabled) {
+          transform: translateY(0px); /* Press down */
+        }
+        .join-button:disabled {
+          background-color: var(--background-disabled);
+          color: var(--foreground-disabled);
+          cursor: not-allowed;
+          opacity: 0.7;
+        }
+        .error-message {
+           color: var(--color-error);
+           background-color: rgba(239, 68, 68, 0.1);
+           border: 1px solid rgba(239, 68, 68, 0.3);
+           padding: 10px;
+           border-radius: 6px;
+           margin-bottom: 15px;
+           text-align: left;
+           font-size: 0.9em;
+        }
+         .status-text {
+             margin-top: 15px;
+             font-size: 0.9em;
+             color: var(--foreground-muted);
+         }
+         .status-text.error { color: var(--color-error); }
+         .status-text.warning { color: var(--color-warning); }
+
+
+        /* In-Call Screen Styles */
+        .call-container {
+          display: flex; /* Use flex for main layout */
+          width: 100%;
+          height: 100%;
+          background-color: #000; /* Black background for the call */
+          position: relative; /* For positioning children like controls */
+        }
+
+        .main-video-area {
+           flex-grow: 1; /* Takes up remaining space */
+           position: relative; /* Context for PiP */
+           overflow: hidden; /* Ensure video fits */
+           background-color: #000;
+           display: flex;
+           justify-content: center;
+           align-items: center;
+        }
+
+        /* Style the video element itself via the class passed */
+        :global(.main-video) {
+           max-width: 100%;
+           max-height: 100%;
+           object-fit: contain; /* Contain ensures full video is visible */
+           background-color: #000;
+        }
+        :global(.main-video.local-only) {
+            /* Could add specific styles if needed when only local is shown */
+        }
+
+        /* Mirror the local preview */
+        :global(.local-preview video) { /* Target the inner video element */
+            transform: scaleX(-1);
+        }
+
+        .local-pip-container {
+          position: absolute;
+          bottom: 80px; /* Above controls */
+          right: 20px;
+          width: 15%; /* Responsive width */
+          max-width: 180px; /* Max size */
+          min-width: 100px; /* Min size */
+          aspect-ratio: 4 / 3;
+          border: 2px solid rgba(255, 255, 255, 0.3);
+          border-radius: 8px;
+          overflow: hidden; /* Clip the video */
+          box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+          z-index: 10;
+          background-color: #000; /* BG in case video doesn't load */
+        }
+        :global(.local-pip-video) {
+          width: 100%;
+          height: 100%;
+          object-fit: cover;
+        }
+
+        /* Mirror the local preview in PiP */
+        /* :global(.local-pip-video.local-preview video) { 
+            transform: scaleX(-1); 
+        } */ 
+        /* Combined rule above handles both cases */
+
+        .remote-gallery {
+          display: none; /* Hidden by default, shown on larger screens */
+          flex-direction: column;
+          gap: 10px;
+          padding: 10px;
+          background-color: var(--background-secondary);
+          width: 200px; /* Fixed width sidebar */
+          height: 100%;
+          overflow-y: auto;
+          flex-shrink: 0; /* Prevent shrinking */
+        }
+        .gallery-item {
+           position: relative;
+           aspect-ratio: 4 / 3;
+           border-radius: 6px;
+           overflow: hidden;
+           background-color: #000;
+        }
+        :global(.gallery-video) {
+           width: 100%;
+           height: 100%;
+           object-fit: cover;
+        }
+         .gallery-peer-id {
+           position: absolute;
+           bottom: 5px;
+           left: 5px;
+           background-color: rgba(0, 0, 0, 0.5);
+           color: white;
+           padding: 2px 5px;
+           font-size: 0.8em;
+           border-radius: 3px;
+         }
+
+
+        .call-info {
+          position: absolute;
+          top: 15px;
+          left: 15px;
+          background-color: rgba(0, 0, 0, 0.4);
+          padding: 5px 10px;
+          border-radius: 6px;
+          font-size: 0.9em;
+          color: var(--foreground);
+          z-index: 5;
+        }
+        .call-info strong {
+          color: var(--accent);
+        }
+
+        .waiting-message {
+          position: absolute;
+          top: 50%;
+          left: 50%;
+          transform: translate(-50%, -50%);
+          color: var(--foreground-muted);
+          font-size: 1.2em;
+          background-color: rgba(0, 0, 0, 0.6);
+          padding: 15px 25px;
+          border-radius: 8px;
+        }
+
+        /* Controls Bar */
+        .controls-bar {
+          position: absolute;
+          bottom: 0;
+          left: 0;
+          width: 100%;
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          padding: 15px 0;
+          gap: 15px;
+          background: linear-gradient(to top, rgba(0, 0, 0, 0.7), rgba(0, 0, 0, 0)); /* Gradient background */
+          z-index: 20;
+        }
+        .control-button {
+          background-color: rgba(255, 255, 255, 0.2);
+          border: none;
+          color: white;
+          padding: 10px;
+          border-radius: 50%; /* Circular buttons */
+          width: 50px;
+          height: 50px;
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          cursor: pointer;
+          font-size: 0.8em; /* Adjust if using text */
+          font-weight: 500;
+          transition: background-color 0.2s ease;
+          /* Add icons later */
+        }
+        .control-button:hover {
+          background-color: rgba(255, 255, 255, 0.3);
+        }
+        .control-button.muted, .control-button.stopped {
+          background-color: var(--background-secondary); /* Indicate active state */
+          color: var(--foreground-muted);
+        }
+        .control-button.leave {
+          background-color: var(--color-error);
+        }
+        .control-button.leave:hover {
+          background-color: #dc2626; /* Darker red */
+        }
+        .control-button.debug {
+            background-color: rgba(255, 255, 100, 0.15); /* Slightly different color for debug */
+        }
+        .control-button.debug:hover {
+             background-color: rgba(255, 255, 100, 0.3);
+        }
+
+        /* Responsive Adjustments */
+        @media (min-width: 768px) {
+           .call-container {
+              /* On larger screens, maybe don't force full black BG unless needed */
+              background-color: var(--background);
+           }
+           .main-video-area {
+              /* Could adjust main video area sizing if gallery is shown */
+           }
+           .local-pip-container {
+              /* Slightly larger PiP on desktop */
+              width: 18%;
+              max-width: 220px;
+           }
+           .remote-gallery {
+              display: flex; /* Show gallery sidebar */
+           }
+           .call-info {
+             /* Keep top left */
+           }
+           .controls-bar {
+             /* Maybe less prominent background on desktop */
+             background: rgba(0, 0, 0, 0.1);
+             padding: 10px 0;
+             bottom: 10px; /* Give some space */
+             left: 50%;
+             transform: translateX(-50%);
+             width: auto; /* Fit content */
+             border-radius: 10px;
+           }
+           .waiting-message {
+             /* No change needed */
+           }
+        }
+
+        @media (min-width: 1200px) {
+            .remote-gallery {
+                width: 250px; /* Wider gallery on very large screens */
+            }
+            .local-pip-container {
+              max-width: 250px;
+            }
+        }
+
+        /* Debug Toggle Button (Pre-Join) */
+        .debug-toggle-button {
+            background: none;
+            border: 1px solid var(--border);
+            color: var(--foreground-muted);
+            padding: 5px 10px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.8em;
+            transition: all 0.2s ease;
+        }
+        .debug-toggle-button:hover {
+            background-color: var(--background-input);
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+        .pre-join-debug {
+           margin-top: 20px; /* Space below join form */
+           position: absolute; /* Position independently */
+           bottom: 20px;
+           left: 50%;
+           transform: translateX(-50%);
+        }
+
+        /* Log Window Styles */
+        .log-window {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            width: 90%;
+            max-width: 600px;
+            height: 50vh; /* Use viewport height */
+            max-height: 400px;
+            background: rgba(30, 30, 30, 0.98); /* Less transparency */
+            border: 1px solid #444;
+            border-radius: 8px;
+            z-index: 1000;
+            backdrop-filter: blur(5px);
+            display: flex;
+            flex-direction: column;
+        }
+        .log-content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 10px;
+            font-family: monospace;
+            font-size: 0.9em;
+        }
+        .log-entry {
+            margin: 4px 0;
+            padding: 4px;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+        .log-header {
+            padding: 10px;
+            background: rgba(0,0,0,0.3);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .stats-button {
+            background: #007aff;
+            border: none;
+            color: white;
+            padding: 5px 10px;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .close-log-button {
+            background: none;
+            border: none;
+            color: var(--foreground-muted);
+            font-size: 1.5em;
+            line-height: 1;
+            cursor: pointer;
+            padding: 0 5px;
+        }
+        .close-log-button:hover {
+            color: var(--foreground);
+        }
+        .no-logs {
+            color: var(--foreground-muted);
+            text-align: center;
+            margin-top: 20px;
+        }
+
+        .call-stats {
+          font-size: 0.8em;
+          margin-top: 4px;
+          opacity: 0.9;
+        }
+      `}</style>
+    </>
   );
 }

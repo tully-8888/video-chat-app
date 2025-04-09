@@ -1,13 +1,20 @@
 # .cursorules
 
 [instructions]
-This is a video chat application project designed for peer-to-peer (P2P) communication using WebRTC.
-The frontend is built with Next.js and TypeScript, primarily located in the `src/app` directory. Key areas include components (`src/app/components`) and custom hooks (`src/app/hooks`).
-The backend provides signaling capabilities to facilitate the P2P connections. The signaling logic seems primarily located in the Node.js server (`server/server.js`), though potential TypeScript logic might exist in `src/server/signaling-server.ts`. Prioritize examining `server/server.js`. The signaling server's role is *only* to exchange connection metadata (like SDP offers/answers and ICE candidates) between peers, not to relay media streams.
-Focus on application logic within `src/` and `server/`, particularly related to:
-- Frontend: UI components, state management (React state, Context, Zustand, etc.), API calls (to the signaling server), WebRTC (`RTCPeerConnection`) setup and management within hooks or components.
-- Backend: Signaling message handling (e.g., room management, offer/answer/candidate exchange, user presence), likely using WebSockets (`socket.io`, `ws`).
-When providing code examples or modifications, adhere to TypeScript best practices for the frontend (`src/`) and JavaScript (ES6+) for the backend (`server/`). Ensure code aligns with the P2P architecture goal.
+This is a peer-to-peer (P2P) video chat application using WebRTC.
+
+The frontend is built with Next.js and TypeScript, primarily located in the `src/app` directory. Key areas include:
+- UI Components: Standard React components under `src/app` (e.g., `page.tsx`).
+- Custom Hooks (`src/app/hooks`): 
+  - `useWebRTC.ts`: Manages WebRTC peer connections, leveraging the `simple-peer` library for simplifying the WebRTC API.
+  - `useWebSocket.ts`: Handles the persistent WebSocket connection to the signaling server.
+- State Management: Primarily uses React's built-in state (`useState`, `useRef`) and context management via hooks.
+- Important Note: Pay close attention to React hook dependencies (`useCallback`, `useEffect`) as the interaction between `useWebRTC` and `useWebSocket` is sensitive to callback stability.
+
+The backend provides signaling capabilities to facilitate the P2P connections. 
+- Signaling Server: Located in `server/server.js` (Node.js). Its role is *only* to exchange connection metadata (e.g., `join`, `existing_room`, `user_joined`, `user_left`, `signal` containing SDP offers/answers and ICE candidates) between peers via WebSockets. It does *not* relay media streams.
+
+When providing code examples or modifications, adhere to TypeScript best practices for the frontend (`src/`) and JavaScript (ES6+) for the backend (`server/`). Ensure code aligns with the P2P architecture and React hook best practices.
 
 [ignore]
 # Version Control
