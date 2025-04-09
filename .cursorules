@@ -1,0 +1,52 @@
+# .cursorules
+
+[instructions]
+This is a video chat application project designed for peer-to-peer (P2P) communication using WebRTC.
+The frontend is built with Next.js and TypeScript, primarily located in the `src/app` directory. Key areas include components (`src/app/components`) and custom hooks (`src/app/hooks`).
+The backend provides signaling capabilities to facilitate the P2P connections. The signaling logic seems primarily located in the Node.js server (`server/server.js`), though potential TypeScript logic might exist in `src/server/signaling-server.ts`. Prioritize examining `server/server.js`. The signaling server's role is *only* to exchange connection metadata (like SDP offers/answers and ICE candidates) between peers, not to relay media streams.
+Focus on application logic within `src/` and `server/`, particularly related to:
+- Frontend: UI components, state management (React state, Context, Zustand, etc.), API calls (to the signaling server), WebRTC (`RTCPeerConnection`) setup and management within hooks or components.
+- Backend: Signaling message handling (e.g., room management, offer/answer/candidate exchange, user presence), likely using WebSockets (`socket.io`, `ws`).
+When providing code examples or modifications, adhere to TypeScript best practices for the frontend (`src/`) and JavaScript (ES6+) for the backend (`server/`). Ensure code aligns with the P2P architecture goal.
+
+[ignore]
+# Version Control
+.git/
+
+# Dependencies
+node_modules/
+
+# Build outputs & Cache
+.next/
+out/
+build/
+dist/
+.swc/
+.vercel/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment variables
+.env*
+!.env.example
+
+# OS generated files
+.DS_Store
+
+# IDE/Editor config
+.vscode/
+.idea/
+.cursor/
+
+# Secrets/Keys
+*.pem
+
+# Generated server config (if applicable)
+server/server-port.json
+
+# NOTE: package-lock.json and yarn.lock are intentionally NOT ignored
+# to ensure visibility into exact dependencies for reproducibility.
+# NOTE: Test files (*.test.js, *.spec.ts, __tests__/, etc.) are also NOT ignored by default.

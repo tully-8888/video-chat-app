@@ -1,0 +1,40 @@
+{
+  "name": "video-chat-app",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "server": "cd server && npm run dev",
+    "dev:all": "concurrently \"npm run dev\" \"npm run server\"",
+    "clean:mac": "pkill -f 'node.*server.js' || true",
+    "clean:win": "taskkill /F /IM node.exe || true",
+    "start:clean": "npm run clean:mac && npm run dev:all"
+  },
+  "dependencies": {
+    "@types/simple-peer": "^9.11.8",
+    "@types/uuid": "^10.0.0",
+    "event-source-polyfill": "^1.0.31",
+    "next": "15.2.4",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "simple-peer": "^9.11.1",
+    "uuid": "^11.1.0",
+    "ws": "^8.18.1"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "^3",
+    "@tailwindcss/postcss": "^4",
+    "@types/event-source-polyfill": "^1.0.5",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "concurrently": "^8.2.2",
+    "eslint": "^9",
+    "eslint-config-next": "15.2.4",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  }
+}
