@@ -53,6 +53,14 @@ export default function Home() {
   const [showLogs, setShowLogs] = useState(false); // State to control log window visibility
   // -----------------------
 
+  // New state for call statistics
+  const [callStats, setCallStats] = useState<{
+    totalSent: string;
+    totalReceived: string; 
+    currentBitrate: string;
+    packetLoss: string;
+  } | null>(null);
+
   // Helper function to add logs
   const addLog = useCallback((type: 'log' | 'error' | 'warn', ...args: unknown[]) => {
     // Simple serialization for objects
@@ -287,63 +295,91 @@ export default function Home() {
   const logPeerStats = useCallback(async () => {
     if (!isJoined || peers.size === 0) {
       addLog('warn', 'Cannot get stats: Not in a room or no peers connected.');
+      setCallStats(null); // Clear stats if not joined or no peers
       return;
     }
 
     addLog('log', '--- Fetching WebRTC Stats ---');
-    
+
+    // Initialize aggregators outside the loop
+    let totalAggregatedSent = 0;
+    let totalAggregatedReceived = 0;
+    let totalAggregatedBitrate = 0;
+    let totalAggregatedPacketLoss = 0;
+    let peerCount = 0; // To average packet loss later
+
     for (const [peerId, peerData] of peers.entries()) {
       if (peerData.peer) {
         try {
           const pc = (peerData.peer as PeerInstance & { _pc: RTCPeerConnection })._pc;
           const stats = await pc.getStats();
-          
-          let totalBytesSent = 0;
-          let totalBytesReceived = 0;
-          let currentBitrate = 0;
-          let availableBitrate = 0;
-          let packetLoss = 0;
+
+          // Use unique names for variables within this peer's scope
+          let currentPeerBytesSent = 0;
+          let currentPeerBytesReceived = 0;
+          let currentPeerBitrate = 0;
+          let currentPeerAvailableBitrate = 0;
+          let currentPeerPacketLoss = 0;
 
           stats.forEach(report => {
-            // Track cumulative bytes
+            // Track cumulative bytes for this peer
             if (report.type === 'outbound-rtp') {
-              totalBytesSent += report.bytesSent || 0;
+              currentPeerBytesSent += report.bytesSent || 0;
             }
             if (report.type === 'inbound-rtp') {
-              totalBytesReceived += report.bytesReceived || 0;
+              currentPeerBytesReceived += report.bytesReceived || 0;
             }
 
-            // Track connection quality
+            // Track connection quality for this peer
             if (report.type === 'candidate-pair' && report.nominated) {
-              currentBitrate = report.availableOutgoingBitrate || 0;
-              availableBitrate = report.availableIncomingBitrate || 0;
-              packetLoss = report.requestsReceived && report.responsesReceived ? 
+              currentPeerBitrate = report.availableOutgoingBitrate || 0;
+              currentPeerAvailableBitrate = report.availableIncomingBitrate || 0;
+              currentPeerPacketLoss = report.requestsReceived && report.responsesReceived ?
                 ((report.requestsReceived - report.responsesReceived) / report.requestsReceived) * 100 : 0;
             }
           });
 
-          // Convert bytes to MB
-          const sentMB = totalBytesSent / (1024 * 1024);
-          const receivedMB = totalBytesReceived / (1024 * 1024);
-          
-          // Convert bitrate to Mbps
-          const currentMbps = currentBitrate / 1e6;
-          const availableMbps = availableBitrate / 1e6;
+          // Convert units for this peer
+          const sentMB = currentPeerBytesSent / (1024 * 1024);
+          const receivedMB = currentPeerBytesReceived / (1024 * 1024);
+          const currentMbps = currentPeerBitrate / 1e6; // This is fine as a const per peer calculation
+          const availableMbps = currentPeerAvailableBitrate / 1e6;
 
           addLog('log', `Peer ${peerId.substring(0, 6)}:
   Total Sent: ${sentMB.toFixed(2)} MB
   Total Received: ${receivedMB.toFixed(2)} MB
   Current Bitrate: ${currentMbps.toFixed(2)} Mbps
   Available Bitrate: ${availableMbps.toFixed(2)} Mbps
-  Packet Loss: ${packetLoss.toFixed(2)}%`);
+  Packet Loss: ${currentPeerPacketLoss.toFixed(2)}%`);
+
+          // Aggregate stats from this peer
+          totalAggregatedSent += sentMB;
+          totalAggregatedReceived += receivedMB;
+          totalAggregatedBitrate += currentMbps; // Summing bitrates across peers
+          totalAggregatedPacketLoss += currentPeerPacketLoss;
+          peerCount++;
 
         } catch (error) {
           addLog('error', `Failed to get stats for peer ${peerId}: ${error instanceof Error ? error.message : String(error)}`);
         }
       }
     }
+
     addLog('log', '--- Finished Fetching Stats ---');
-  }, [peers, isJoined, addLog]);
+
+    // Calculate average packet loss if there are peers
+    const avgPacketLoss = peerCount > 0 ? totalAggregatedPacketLoss / peerCount : 0;
+
+    // Set the aggregated stats state *after* the loop finishes
+    setCallStats({
+      totalSent: totalAggregatedSent.toFixed(2) + ' MB',
+      totalReceived: totalAggregatedReceived.toFixed(2) + ' MB',
+      // Displaying the sum of bitrates. Could be changed to average if preferred.
+      currentBitrate: totalAggregatedBitrate.toFixed(2) + ' Mbps', 
+      packetLoss: avgPacketLoss.toFixed(2) + '%' // Displaying average packet loss
+    });
+
+  }, [peers, isJoined, addLog, setCallStats]); // Ensure setCallStats is in the dependency array
 
   // LogWindow component definition moved inside Home
   const LogWindow = ({
@@ -483,6 +519,12 @@ export default function Home() {
              {/* Call Info (Could be overlay or top bar) */}
              <div className="call-info">
                  Room: <strong>{roomId}</strong> | You: <strong>{userId}</strong>
+                 {callStats && (
+                   <div className="call-stats">
+                     <div>↑ {callStats.totalSent} | ↓ {callStats.totalReceived}</div>
+                     <div>Bitrate: {callStats.currentBitrate} | Loss: {callStats.packetLoss}</div>
+                   </div>
+                 )}
              </div>
 
              {/* Loading/Waiting Message */}
@@ -935,8 +977,9 @@ export default function Home() {
             right: 20px;
             width: 90%;
             max-width: 600px;
-            height: 300px;
-            background: rgba(30, 30, 30, 0.95);
+            height: 50vh; /* Use viewport height */
+            max-height: 400px;
+            background: rgba(30, 30, 30, 0.98); /* Less transparency */
             border: 1px solid #444;
             border-radius: 8px;
             z-index: 1000;
@@ -987,6 +1030,12 @@ export default function Home() {
             color: var(--foreground-muted);
             text-align: center;
             margin-top: 20px;
+        }
+
+        .call-stats {
+          font-size: 0.8em;
+          margin-top: 4px;
+          opacity: 0.9;
         }
       `}</style>
     </>
