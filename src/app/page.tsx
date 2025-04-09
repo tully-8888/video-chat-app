@@ -48,6 +48,7 @@ export default function Home() {
   const [isVideoStopped, setIsVideoStopped] = useState(false);
 
   // --- Debugging State ---
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [logs, setLogs] = useState<{ type: 'log' | 'error' | 'warn', message: string, timestamp: number }[]>([]);
   const [showLogs, setShowLogs] = useState(false);
   // -----------------------
