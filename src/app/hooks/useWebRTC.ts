@@ -25,6 +25,7 @@ interface UseWebRTCReturn {
   leaveRoom: () => void;
   isJoined: boolean;
   webSocketState: string; // Expose WS state for UI feedback
+  setVideoBitrate: (bitrate: number) => Promise<void>; // Add bitrate function
 }
 
 // Configuration for STUN servers (use public ones for now)
@@ -344,11 +345,53 @@ export function useWebRTC({
     };
   }, [isJoined, leaveRoom]); // Leave room if isJoined status changes (to false)
 
+  // --- Bitrate Control ---
+  const setVideoBitrate = useCallback(async (bitrate: number) => {
+    console.log(`Attempting to set max video bitrate to ${bitrate / 1000} kbps for all peers.`);
+    for (const peerData of peersRef.current.values()) {
+      // Access the underlying RTCPeerConnection (relies on simple-peer internal structure)
+      const pc = (peerData.peer as PeerInstance & { _pc: RTCPeerConnection })._pc;
+
+      if (!pc) {
+        console.warn(`Peer ${peerData.peerId}: Could not access RTCPeerConnection.`);
+        continue;
+      }
+
+      const senders = pc.getSenders();
+      const videoSender = senders.find(sender => sender.track?.kind === 'video');
+
+      if (!videoSender) {
+        console.warn(`Peer ${peerData.peerId}: No video sender found.`);
+        continue;
+      }
+
+      try {
+        const parameters = videoSender.getParameters();
+
+        if (!parameters.encodings || parameters.encodings.length === 0) {
+          // If no encodings exist, create one with the desired bitrate
+          parameters.encodings = [{ maxBitrate: bitrate }];
+          console.log(`Peer ${peerData.peerId}: No existing encodings found, creating new encoding parameters.`);
+        } else {
+          // Modify the existing encoding's maxBitrate
+          parameters.encodings[0].maxBitrate = bitrate;
+           console.log(`Peer ${peerData.peerId}: Setting encoding[0].maxBitrate to ${bitrate}.`);
+        }
+
+        await videoSender.setParameters(parameters);
+        console.log(`Peer ${peerData.peerId}: Successfully set maxBitrate to ${bitrate}.`);
+      } catch (error) {
+        console.error(`Peer ${peerData.peerId}: Failed to set video bitrate to ${bitrate}:`, error);
+      }
+    }
+  }, []); // No dependencies, relies on peersRef
+
   return {
     peers,
     joinRoom,
     leaveRoom,
     isJoined,
     webSocketState,
+    setVideoBitrate,
   };
 } 

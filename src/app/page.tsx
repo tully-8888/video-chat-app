@@ -2,6 +2,7 @@
 
 import React from 'react';
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { useDebouncedCallback } from 'use-debounce'; // Import debounce hook
 import { useWebRTC } from './hooks/useWebRTC';
 import type { Instance as PeerInstance } from 'simple-peer'; // Import PeerInstance type
 
@@ -56,10 +57,15 @@ export default function Home() {
   // New state for call statistics
   const [callStats, setCallStats] = useState<{
     totalSent: string;
-    totalReceived: string; 
+    totalReceived: string;
     currentBitrate: string;
     packetLoss: string;
   } | null>(null);
+
+  // New state for bitrate slider
+  const [targetBitrateKbps, setTargetBitrateKbps] = useState<number>(800); // Default: 800 kbps
+  const MIN_BITRATE_KBPS = 100;
+  const MAX_BITRATE_KBPS = 2500; // 2.5 Mbps max, adjust as needed
 
   // Helper function to add logs
   const addLog = useCallback((type: 'log' | 'error' | 'warn', ...args: unknown[]) => {
@@ -135,13 +141,32 @@ export default function Home() {
     leaveRoom: rtcLeaveRoom, 
     isJoined, 
     webSocketState,
-    peers
+    peers,
+    setVideoBitrate
   } = useWebRTC({
     localStream,
     onRemoteStream: handleRemoteStream,
     onPeerDisconnect: handlePeerDisconnect,
   });
   // -------------------------------------
+
+  // --- Debounced Bitrate Update ---
+  const debouncedSetBitrate = useDebouncedCallback(
+    async (bitrateKbps: number) => {
+      if (setVideoBitrate) {
+        const bitrateBps = bitrateKbps * 1000;
+        await setVideoBitrate(bitrateBps);
+      }
+    },
+    300 // Debounce for 300ms
+  );
+
+  const handleBitrateChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const newBitrate = parseInt(event.target.value, 10);
+    setTargetBitrateKbps(newBitrate);
+    debouncedSetBitrate(newBitrate);
+  };
+  // -------------------------------
 
   // Get user media - Now returns the stream or throws error
   const getMedia = useCallback(async (audio = true, video = true): Promise<MediaStream> => {
@@ -285,12 +310,6 @@ export default function Home() {
     }
   }, [localStream]);
 
-  // Determine layout state for easier conditional rendering
-  const mainRemoteStreamEntry = remoteStreams.size > 0 ? [...remoteStreams.entries()][0] : null;
-  // const mainRemotePeerId = mainRemoteStreamEntry ? mainRemoteStreamEntry[0] : null; // Removed as unused
-  const mainRemoteStream = mainRemoteStreamEntry ? mainRemoteStreamEntry[1] : null;
-  const otherRemoteStreams = remoteStreams.size > 1 ? [...remoteStreams.entries()].slice(1) : [];
-
   // Function to get and log WebRTC stats
   const logPeerStats = useCallback(async () => {
     if (!isJoined || peers.size === 0) {
@@ -432,616 +451,192 @@ export default function Home() {
     );
   };
 
+  // Calculate grid layout based on number of participants
+  const participantCount = remoteStreams.size + 1; // +1 for local video
+  let gridCols = 'grid-cols-1';
+  let gridRows = 'grid-rows-1';
+  let videoHeight = 'h-full';
+  const localVideoSpan = 'col-span-1 row-span-1';
+
+  if (participantCount === 2) {
+    gridCols = 'grid-cols-2';
+    gridRows = 'grid-rows-1';
+    videoHeight = 'h-[calc(50vh-2rem)] md:h-[calc(100vh-4rem)]'; // Adjust based on controls height
+  } else if (participantCount === 3 || participantCount === 4) {
+    gridCols = 'grid-cols-2';
+    gridRows = 'grid-rows-2';
+    videoHeight = 'h-[calc(50vh-2rem)]';
+  } else if (participantCount > 4) {
+    // Handle more participants (e.g., larger grid or different layout)
+    // For simplicity, cap at 2x2 for now, subsequent videos might overflow or need scrolling
+    gridCols = 'grid-cols-3'; // Example for 5+
+    gridRows = 'grid-rows-auto';
+    videoHeight = 'h-[calc(33vh-1.5rem)]';
+  }
+  // Simple case for single user
+  if (participantCount === 1) {
+      videoHeight = 'h-[calc(100vh-4rem)]';
+  }
+
   return (
-    <>
-      <main className={`main-container ${isJoined ? 'in-call' : 'pre-join'}`}>
+    <div className="min-h-screen bg-gray-900 text-white flex flex-col">
+      <header className="bg-gray-800 p-4 shadow-md flex justify-between items-center">
+        <h1 className="text-2xl font-bold">P2P Video Chat</h1>
+        {isJoined && (
+          <div className="text-sm text-gray-400">
+            Room: {roomId} | User: {userId} | WS: {webSocketState}
+          </div>
+        )}
+      </header>
+
+      <main className="flex-grow p-4 flex flex-col">
+        {error && (
+          <div
+            className="bg-red-800 border border-red-600 text-red-100 px-4 py-3 rounded relative mb-4 shadow-lg"
+            role="alert"
+          >
+            <strong className="font-bold">Error: </strong>
+            <span className="block sm:inline">{error}</span>
+            <button
+              onClick={() => setError(null)}
+              className="absolute top-0 bottom-0 right-0 px-4 py-3 text-red-100 hover:text-white"
+              aria-label="Close"
+            >
+              &times;
+            </button>
+          </div>
+        )}
+
         {!isJoined ? (
-          // --- Pre-Join Screen ---
-          <div className="join-container">
-            <h1 className="title">Video Chat</h1>
-            <p className="subtitle">Enter details to join or start a room</p>
-
-            {error && (
-              <p className="error-message">
-                <strong>Error:</strong> {error}
-              </p>
-            )}
-            {/* REMOVED WebSocket status display
-            <p className="ws-status">
-              WebSocket: <span className={`status-${webSocketState.toLowerCase()}`}>{webSocketState}</span>
-            </p>
-            */}
-
-            <div className="input-group">
+          // --- Join Form ---
+          <div className="flex-grow flex items-center justify-center">
+            <div className="bg-gray-800 p-8 rounded-lg shadow-xl w-full max-w-md">
+              <h2 className="text-xl mb-6 text-center">Join Room</h2>
               <input
                 type="text"
                 placeholder="Room ID"
                 value={roomId}
-                onChange={(e) => setRoomId(e.target.value)}
+                onChange={(e) => setRoomId(e.target.value.trim())}
+                className="w-full p-3 mb-4 bg-gray-700 rounded border border-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 disabled={isJoining}
-                className="input-field"
               />
               <input
                 type="text"
-                placeholder="Your User ID (e.g., Alice)"
+                placeholder="User ID (auto-generated if blank)"
                 value={userId}
-                onChange={(e) => setUserId(e.target.value)}
+                onChange={(e) => setUserId(e.target.value.trim())}
+                className="w-full p-3 mb-4 bg-gray-700 rounded border border-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 disabled={isJoining}
-                className="input-field"
               />
+              <button
+                onClick={handleJoinRoom}
+                disabled={!roomId.trim() || webSocketState !== 'OPEN' || isJoining}
+                className={`w-full p-3 rounded font-semibold transition-colors duration-200 ${isJoining || webSocketState !== 'OPEN' || !roomId.trim()
+                    ? 'bg-gray-600 cursor-not-allowed'
+                    : 'bg-blue-600 hover:bg-blue-700'
+                  }`}
+              >
+                {isJoining ? 'Joining...' : (webSocketState !== 'OPEN' ? `Connecting (${webSocketState})...` : 'Join Room')}
+              </button>
             </div>
-            <button
-              onClick={handleJoinRoom}
-              disabled={webSocketState !== 'OPEN' || isJoining || !roomId.trim() || !userId.trim()}
-              className="join-button"
-            >
-              {isJoining ? 'Joining...' : 'Join Room'}
-            </button>
-            {webSocketState === 'CONNECTING' && <p className="status-text">Connecting to server...</p>}
-            {webSocketState !== 'OPEN' && webSocketState !== 'CONNECTING' && <p className="status-text error">Cannot connect to signaling server.</p>}
-            {/* Debug Toggle Button (Pre-Join) */}
-            <button onClick={() => setShowLogs(prev => !prev)} className="debug-toggle-button pre-join-debug">
-                 {showLogs ? 'Hide Logs' : 'Show Logs'}
-            </button>
           </div>
-
         ) : (
-          // --- In-Call Screen ---
-          <div className="call-container">
-              {/* Main Video Area (Handles full screen for primary remote/local) */}
-              <div className="main-video-area">
-                 {mainRemoteStream ? (
-                    <VideoPlayer stream={mainRemoteStream} className="main-video" />
-                 ) : (
-                    <VideoPlayer stream={localStream} muted={true} className="main-video local-only local-preview" />
-                 )}
+          // --- In Call UI ---
+          <div className="flex-grow flex flex-col">
+            {/* --- Video Grid --- */}
+            <div className={`flex-grow grid gap-4 ${gridCols} ${gridRows} content-start overflow-hidden mb-4`}>
+              {/* Local Video */}
+              <div className={`relative bg-black rounded-lg overflow-hidden shadow-lg ${localVideoSpan} ${videoHeight}`}>
+                <VideoPlayer stream={localStream} muted={true} className="w-full h-full" />
+                <div className="absolute bottom-2 left-2 bg-black bg-opacity-50 text-white text-xs px-2 py-1 rounded">
+                  {userId} (You){isMicMuted ? ' [MIC MUTED]' : ''}{isVideoStopped ? ' [CAM OFF]' : ''}
+                </div>
+              </div>
 
-                {/* Local Video (Picture-in-Picture when remote exists) */}
-                {mainRemoteStream && (
-                  <div className="local-pip-container">
-                    <VideoPlayer stream={localStream} muted={true} className="local-pip-video local-preview" />
+              {/* Remote Videos */}
+              {Array.from(remoteStreams.entries()).map(([peerId, stream]) => (
+                <div key={peerId} className={`relative bg-black rounded-lg overflow-hidden shadow-lg ${videoHeight}`}>
+                  <VideoPlayer stream={stream} className="w-full h-full" />
+                  <div className="absolute bottom-2 left-2 bg-black bg-opacity-50 text-white text-xs px-2 py-1 rounded">
+                    {peerId}
                   </div>
-                )}
-             </div>
+                </div>
+              ))}
+            </div>
 
-             {/* Gallery for other remote videos (e.g., on sidebar for desktop) */}
-             {otherRemoteStreams.length > 0 && (
-                 <div className="remote-gallery">
-                     {otherRemoteStreams.map(([peerId, stream]) => (
-                         <div key={peerId} className="gallery-item">
-                             <VideoPlayer stream={stream} className="gallery-video" />
-                             <span className="gallery-peer-id">{peerId.substring(0, 6)}...</span>
-                         </div>
-                     ))}
-                 </div>
-             )}
+            {/* --- Controls --- */}
+            <div className="bg-gray-800 p-3 rounded-lg shadow-md flex flex-wrap items-center justify-center gap-4">
+              {/* Mute/Unmute Mic */}
+              <button
+                onClick={toggleMic}
+                className={`px-4 py-2 rounded font-semibold transition-colors duration-200 ${isMicMuted ? 'bg-yellow-600 hover:bg-yellow-700' : 'bg-gray-600 hover:bg-gray-700'}`}
+              >
+                {isMicMuted ? 'Unmute Mic' : 'Mute Mic'}
+              </button>
 
-             {/* Call Info (Could be overlay or top bar) */}
-             <div className="call-info">
-                 Room: <strong>{roomId}</strong> | You: <strong>{userId}</strong>
-                 {callStats && (
-                   <div className="call-stats">
-                     <div>↑ {callStats.totalSent} | ↓ {callStats.totalReceived}</div>
-                     <div>Bitrate: {callStats.currentBitrate} | Loss: {callStats.packetLoss}</div>
-                   </div>
-                 )}
-             </div>
+              {/* Stop/Start Video */}
+              <button
+                onClick={toggleVideo}
+                className={`px-4 py-2 rounded font-semibold transition-colors duration-200 ${isVideoStopped ? 'bg-yellow-600 hover:bg-yellow-700' : 'bg-gray-600 hover:bg-gray-700'}`}
+              >
+                {isVideoStopped ? 'Start Video' : 'Stop Video'}
+              </button>
 
-             {/* Loading/Waiting Message */}
-             {remoteStreams.size === 0 && (
-                 <div className="waiting-message">
-                     Waiting for others to join...
-                 </div>
-             )}
+              {/* Leave Room */}
+              <button
+                onClick={handleLeaveRoom}
+                className="px-4 py-2 rounded bg-red-600 hover:bg-red-700 font-semibold transition-colors duration-200"
+              >
+                Leave Room
+              </button>
 
+              {/* Show/Hide Logs */}
+              <button
+                onClick={() => setShowLogs(!showLogs)}
+                className="px-4 py-2 rounded bg-purple-600 hover:bg-purple-700 font-semibold transition-colors duration-200"
+              >
+                {showLogs ? 'Hide Logs' : 'Show Logs'}
+              </button>
 
-             {/* Controls Bar */}
-             <div className="controls-bar">
-                <button onClick={toggleMic} className={`control-button ${isMicMuted ? 'muted' : ''}`} title={isMicMuted ? 'Unmute Microphone' : 'Mute Microphone'}>
-                   {/* Mic Icon */}
-                   {isMicMuted ? (
-                       <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="icon">
-                           <path d="M12 1a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3Z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2H3v2a8 8 0 0 0 7 7.93V22h2v-2.07A8 8 0 0 0 21 12v-2h-2Z"></path><line x1="4" x2="20" y1="4" y2="20"></line>
-                       </svg>
-                   ) : (
-                       <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="icon">
-                            <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2H3v2a8 8 0 0 0 7 7.93V22h2v-2.07A8 8 0 0 0 21 12v-2h-2z"></path>
-                       </svg>
-                   )}
-                </button>
-                <button onClick={toggleVideo} className={`control-button ${isVideoStopped ? 'stopped' : ''}`} title={isVideoStopped ? 'Start Video' : 'Stop Video'}>
-                   {/* Video Icon */}
-                   {isVideoStopped ? (
-                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="icon">
-                            <path d="M16 16v1a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h2m5.66 0H14a2 2 0 0 1 2 2v3.34l1 1L23 7v10"></path><line x1="1" x2="23" y1="1" y2="23"></line>
-                        </svg>
-                   ) : (
-                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="icon">
-                             <polygon points="23 7 16 12 23 17 23 7"></polygon><rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect>
-                        </svg>
-                   )}
-                </button>
-                <button onClick={handleLeaveRoom} className="control-button leave" title="Leave Call">
-                   {/* Leave Icon (Phone Down) */}
-                   <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="icon">
-                        <path d="M10.68 13.31a16 16 0 0 0 3.41 2.69l1.9-1.9a2 2 0 0 1 2.12 0l2.12 2.12a2 2 0 0 1 0 2.83L18.84 20a18.41 18.41 0 0 1-15.37-15.37l1.42-1.42a2 2 0 0 1 2.82 0l2.12 2.12a2 2 0 0 1 0 2.12L8.69 9.31a16 16 0 0 0 2.69 3.4Z"></path><path d="m22 2-8.5 8.5"></path><path d="M13.5 13.5 2 22"></path>
-                    </svg>
-                </button>
-                {/* Debug Toggle Button (In-Call) */}
-                <button onClick={() => setShowLogs(prev => !prev)} className="control-button debug" title={showLogs ? 'Hide Logs' : 'Show Logs'}>
-                  {/* Logs Icon (File Text) */}
-                   <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="icon">
-                        <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" x2="8" y1="13" y2="13"></line><line x1="16" x2="8" y1="17" y2="17"></line><line x1="10" x2="8" y1="9" y2="9"></line>
-                    </svg>
-                </button>
-             </div>
+              {/* --- Bitrate Slider Control --- */}
+              <div className="flex items-center gap-2 text-sm">
+                <label htmlFor="bitrateSlider" className="whitespace-nowrap">Max Bitrate:</label>
+                <input
+                  type="range"
+                  id="bitrateSlider"
+                  min={MIN_BITRATE_KBPS}
+                  max={MAX_BITRATE_KBPS}
+                  value={targetBitrateKbps}
+                  onChange={handleBitrateChange}
+                  className="w-32 h-2 bg-gray-600 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                  aria-label="Maximum video bitrate"
+                />
+                <span className="w-16 text-right font-mono">{targetBitrateKbps} kbps</span>
+              </div>
+              {/* ----------------------------- */}
+
+              {/* --- Call Stats Display --- */}
+              {callStats && (
+                <div className="text-xs text-gray-400 border-l border-gray-600 pl-3 ml-1 flex flex-col items-start">
+                  <span>TX: {callStats.totalSent} | RX: {callStats.totalReceived}</span>
+                  <span>Bitrate: {callStats.currentBitrate} | Loss: {callStats.packetLoss}</span>
+                </div>
+              )}
+              {/* ------------------------- */}
+
+            </div>
+
+            {/* Log Window */} 
+            {showLogs && (
+              <LogWindow
+                logs={logs}
+                onClose={() => setShowLogs(false)}
+                onGetStats={logPeerStats}
+              />
+            )}
           </div>
         )}
       </main>
-
-      {/* Conditionally render the Log Window */}
-      {showLogs && (
-          <LogWindow
-              logs={logs}
-              onClose={() => setShowLogs(false)}
-              onGetStats={logPeerStats}
-          />
-      )}
-
-      {/* Global styles and component-specific styles */}
-      <style jsx>{`
-        /* Basic Reset & Theming */
-        :global(body) {
-          margin: 0;
-          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-          background-color: var(--background, #1a1a1a);
-          color: var(--foreground, #eaeaea);
-          overflow: hidden; /* Prevent scrollbars from main page */
-        }
-        :global(:root) {
-            /* Define theme variables if not already globally defined */
-             --background: #121212; /* Slightly darker base */
-             --background-secondary: #1e1e1e; /* Darker card */
-             --background-input: #2c2c2c; /* Slightly lighter input */
-             --foreground: #e0e0e0; /* Slightly softer white */
-             --foreground-muted: #a0a0a0; /* Adjusted muted */
-             --border: #3a3a3a; /* Softer border */
-             --accent: #007aff; /* Apple-like blue */
-             --color-error: #ff3b30; /* Apple-like red */
-             --color-warning: #ff9500; /* Apple-like orange */
-             --color-success: #34c759; /* Apple-like green */
-             --background-disabled: #444;
-             --foreground-disabled: #888;
-        }
-
-        /* Main Container Layouts */
-        .main-container {
-          display: flex;
-          flex-direction: column;
-          height: 100vh;
-          width: 100vw;
-          overflow: hidden;
-        }
-        .main-container.pre-join {
-          justify-content: center;
-          align-items: center;
-          padding: 20px;
-          /* Add a subtle background gradient or image maybe? */
-          background: linear-gradient(135deg, #1a1a1a 0%, #121212 100%);
-        }
-         .main-container.in-call {
-           /* Layout handled by .call-container */
-         }
-
-        /* Pre-Join Screen Styles */
-        .join-container {
-          background-color: var(--background-secondary);
-          padding: 40px 50px; /* Increase padding */
-          border-radius: 16px; /* Larger radius */
-          box-shadow: 0 15px 35px rgba(0, 0, 0, 0.3); /* Deeper shadow */
-          text-align: center;
-          max-width: 480px; /* Slightly wider */
-          width: 100%;
-          border: 1px solid var(--border);
-          transform: scale(1); /* Base for potential animation */
-          transition: transform 0.3s ease-out;
-        }
-        /* Optional: slight scale effect on hover */
-        /* .join-container:hover {
-          transform: scale(1.02);
-        } */
-        .title {
-          margin: 0 0 10px;
-          font-size: 2.8em; /* Larger title */
-          font-weight: 600;
-          color: var(--accent); /* Use accent for title */
-          letter-spacing: -0.5px;
-        }
-        .subtitle {
-          margin: 0 0 35px; /* More space */
-          color: var(--foreground-muted);
-          font-size: 1.1em;
-        }
-        .input-group {
-          display: flex;
-          flex-direction: column;
-          gap: 15px;
-          margin-bottom: 25px;
-        }
-        .input-field {
-          padding: 14px 18px; /* More padding */
-          border: 1px solid var(--border);
-          border-radius: 10px; /* More rounded */
-          background-color: var(--background-input);
-          color: var(--foreground);
-          font-size: 1em;
-          transition: border-color 0.2s ease, box-shadow 0.2s ease;
-        }
-        .input-field:focus {
-          outline: none;
-          border-color: var(--accent);
-          box-shadow: 0 0 0 4px rgba(0, 122, 255, 0.2); /* Accent shadow */
-        }
-        .join-button {
-          padding: 15px 25px; /* Taller button */
-          border: none;
-          border-radius: 10px; /* Match inputs */
-          background-color: var(--accent);
-          color: white;
-          font-size: 1.2em; /* Bigger text */
-          font-weight: 600; /* Bolder text */
-          cursor: pointer;
-          transition: background-color 0.2s ease, opacity 0.2s ease, transform 0.1s ease;
-          width: 100%;
-          margin-top: 10px; /* Space above button */
-        }
-        .join-button:hover:not(:disabled) {
-          background-color: #005bb5; /* Darker accent */
-          transform: translateY(-1px); /* Subtle lift */
-        }
-        .join-button:active:not(:disabled) {
-          transform: translateY(0px); /* Press down */
-        }
-        .join-button:disabled {
-          background-color: var(--background-disabled);
-          color: var(--foreground-disabled);
-          cursor: not-allowed;
-          opacity: 0.7;
-        }
-        .error-message {
-           color: var(--color-error);
-           background-color: rgba(239, 68, 68, 0.1);
-           border: 1px solid rgba(239, 68, 68, 0.3);
-           padding: 10px;
-           border-radius: 6px;
-           margin-bottom: 15px;
-           text-align: left;
-           font-size: 0.9em;
-        }
-         .status-text {
-             margin-top: 15px;
-             font-size: 0.9em;
-             color: var(--foreground-muted);
-         }
-         .status-text.error { color: var(--color-error); }
-         .status-text.warning { color: var(--color-warning); }
-
-
-        /* In-Call Screen Styles */
-        .call-container {
-          display: flex; /* Use flex for main layout */
-          width: 100%;
-          height: 100%;
-          background-color: #000; /* Black background for the call */
-          position: relative; /* For positioning children like controls */
-        }
-
-        .main-video-area {
-           flex-grow: 1; /* Takes up remaining space */
-           position: relative; /* Context for PiP */
-           overflow: hidden; /* Ensure video fits */
-           background-color: #000;
-           display: flex;
-           justify-content: center;
-           align-items: center;
-        }
-
-        /* Style the video element itself via the class passed */
-        :global(.main-video) {
-           max-width: 100%;
-           max-height: 100%;
-           object-fit: contain; /* Contain ensures full video is visible */
-           background-color: #000;
-        }
-        :global(.main-video.local-only) {
-            /* Could add specific styles if needed when only local is shown */
-        }
-
-        /* Mirror the local preview */
-        :global(.local-preview video) { /* Target the inner video element */
-            transform: scaleX(-1);
-        }
-
-        .local-pip-container {
-          position: absolute;
-          bottom: 80px; /* Above controls */
-          right: 20px;
-          width: 15%; /* Responsive width */
-          max-width: 180px; /* Max size */
-          min-width: 100px; /* Min size */
-          aspect-ratio: 4 / 3;
-          border: 2px solid rgba(255, 255, 255, 0.3);
-          border-radius: 8px;
-          overflow: hidden; /* Clip the video */
-          box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
-          z-index: 10;
-          background-color: #000; /* BG in case video doesn't load */
-        }
-        :global(.local-pip-video) {
-          width: 100%;
-          height: 100%;
-          object-fit: cover;
-        }
-
-        /* Mirror the local preview in PiP */
-        /* :global(.local-pip-video.local-preview video) { 
-            transform: scaleX(-1); 
-        } */ 
-        /* Combined rule above handles both cases */
-
-        .remote-gallery {
-          display: none; /* Hidden by default, shown on larger screens */
-          flex-direction: column;
-          gap: 10px;
-          padding: 10px;
-          background-color: var(--background-secondary);
-          width: 200px; /* Fixed width sidebar */
-          height: 100%;
-          overflow-y: auto;
-          flex-shrink: 0; /* Prevent shrinking */
-        }
-        .gallery-item {
-           position: relative;
-           aspect-ratio: 4 / 3;
-           border-radius: 6px;
-           overflow: hidden;
-           background-color: #000;
-        }
-        :global(.gallery-video) {
-           width: 100%;
-           height: 100%;
-           object-fit: cover;
-        }
-         .gallery-peer-id {
-           position: absolute;
-           bottom: 5px;
-           left: 5px;
-           background-color: rgba(0, 0, 0, 0.5);
-           color: white;
-           padding: 2px 5px;
-           font-size: 0.8em;
-           border-radius: 3px;
-         }
-
-
-        .call-info {
-          position: absolute;
-          top: 15px;
-          left: 15px;
-          background-color: rgba(0, 0, 0, 0.4);
-          padding: 5px 10px;
-          border-radius: 6px;
-          font-size: 0.9em;
-          color: var(--foreground);
-          z-index: 5;
-        }
-        .call-info strong {
-          color: var(--accent);
-        }
-
-        .waiting-message {
-          position: absolute;
-          top: 50%;
-          left: 50%;
-          transform: translate(-50%, -50%);
-          color: var(--foreground-muted);
-          font-size: 1.2em;
-          background-color: rgba(0, 0, 0, 0.6);
-          padding: 15px 25px;
-          border-radius: 8px;
-        }
-
-        /* Controls Bar */
-        .controls-bar {
-          position: absolute;
-          bottom: 0;
-          left: 0;
-          right: 0; /* Ensure it spans full width for padding */
-          width: 100%;
-          display: flex;
-          justify-content: center;
-          align-items: center;
-          padding: 15px 0; /* Existing top/bottom padding (will be overridden by safe area below) */
-          padding-bottom: env(safe-area-inset-bottom, 15px); /* Add safe area padding with fallback */
-          box-sizing: border-box; /* Include padding in the element's total width and height */
-          gap: 15px;
-          background: linear-gradient(to top, rgba(0, 0, 0, 0.7), rgba(0, 0, 0, 0)); /* Gradient background */
-          z-index: 20;
-        }
-        .control-button {
-          background-color: rgba(255, 255, 255, 0.2);
-          border: none;
-          color: white;
-          padding: 10px;
-          border-radius: 50%; /* Circular buttons */
-          width: 50px;
-          height: 50px;
-          display: flex;
-          justify-content: center;
-          align-items: center;
-          cursor: pointer;
-          font-size: 0.8em; /* Adjust if using text */
-          font-weight: 500;
-          transition: background-color 0.2s ease;
-          /* Add icons later */
-        }
-        .control-button:hover {
-          background-color: rgba(255, 255, 255, 0.3);
-        }
-        .control-button.muted, .control-button.stopped {
-          background-color: var(--background-secondary); /* Indicate active state */
-          color: var(--foreground-muted);
-        }
-        .control-button.leave {
-          background-color: var(--color-error);
-        }
-        .control-button.leave:hover {
-          background-color: #dc2626; /* Darker red */
-        }
-        .control-button.debug {
-            background-color: rgba(255, 255, 100, 0.15); /* Slightly different color for debug */
-        }
-        .control-button.debug:hover {
-             background-color: rgba(255, 255, 100, 0.3);
-        }
-
-        /* Responsive Adjustments */
-        @media (min-width: 768px) {
-           .call-container {
-              /* On larger screens, maybe don't force full black BG unless needed */
-              background-color: var(--background);
-           }
-           .main-video-area {
-              /* Could adjust main video area sizing if gallery is shown */
-           }
-           .local-pip-container {
-              /* Slightly larger PiP on desktop */
-              width: 18%;
-              max-width: 220px;
-           }
-           .remote-gallery {
-              display: flex; /* Show gallery sidebar */
-           }
-           .call-info {
-             /* Keep top left */
-           }
-           .controls-bar {
-             /* Maybe less prominent background on desktop */
-             background: rgba(0, 0, 0, 0.1);
-             padding: 10px 0; /* Adjust desktop padding */
-             padding-bottom: env(safe-area-inset-bottom, 10px); /* Also apply safe area here for consistency */
-             bottom: 10px; /* Give some space */
-             left: 50%;
-             transform: translateX(-50%);
-             width: auto; /* Fit content */
-             border-radius: 10px;
-           }
-           .waiting-message {
-             /* No change needed */
-           }
-        }
-
-        @media (min-width: 1200px) {
-            .remote-gallery {
-                width: 250px; /* Wider gallery on very large screens */
-            }
-            .local-pip-container {
-              max-width: 250px;
-            }
-        }
-
-        /* Debug Toggle Button (Pre-Join) */
-        .debug-toggle-button {
-            background: none;
-            border: 1px solid var(--border);
-            color: var(--foreground-muted);
-            padding: 5px 10px;
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 0.8em;
-            transition: all 0.2s ease;
-        }
-        .debug-toggle-button:hover {
-            background-color: var(--background-input);
-            border-color: var(--accent);
-            color: var(--accent);
-        }
-        .pre-join-debug {
-           margin-top: 20px; /* Space below join form */
-           position: absolute; /* Position independently */
-           bottom: 20px;
-           left: 50%;
-           transform: translateX(-50%);
-        }
-
-        /* Log Window Styles */
-        .log-window {
-            position: fixed;
-            bottom: 20px;
-            right: 20px;
-            width: 90%;
-            max-width: 600px;
-            height: 50vh; /* Use viewport height */
-            max-height: 400px;
-            background: rgba(30, 30, 30, 0.98); /* Less transparency */
-            border: 1px solid #444;
-            border-radius: 8px;
-            z-index: 1000;
-            backdrop-filter: blur(5px);
-            display: flex;
-            flex-direction: column;
-        }
-        .log-content {
-            flex: 1;
-            overflow-y: auto;
-            padding: 10px;
-            font-family: monospace;
-            font-size: 0.9em;
-        }
-        .log-entry {
-            margin: 4px 0;
-            padding: 4px;
-            border-bottom: 1px solid rgba(255,255,255,0.1);
-        }
-        .log-header {
-            padding: 10px;
-            background: rgba(0,0,0,0.3);
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-        .stats-button {
-            background: #007aff;
-            border: none;
-            color: white;
-            padding: 5px 10px;
-            border-radius: 4px;
-            cursor: pointer;
-        }
-        .close-log-button {
-            background: none;
-            border: none;
-            color: var(--foreground-muted);
-            font-size: 1.5em;
-            line-height: 1;
-            cursor: pointer;
-            padding: 0 5px;
-        }
-        .close-log-button:hover {
-            color: var(--foreground);
-        }
-        .no-logs {
-            color: var(--foreground-muted);
-            text-align: center;
-            margin-top: 20px;
-        }
-
-        .call-stats {
-          font-size: 0.8em;
-          margin-top: 4px;
-          opacity: 0.9;
-        }
-      `}</style>
-    </>
+    </div>
   );
 }
