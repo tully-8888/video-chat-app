@@ -75,8 +75,6 @@ export default function Home() {
     isJoined, 
     webSocketState
   } = useWebRTC({
-    roomId: roomId, 
-    userId: userId,   
     localStream,
     onRemoteStream: handleRemoteStream,
     onPeerDisconnect: handlePeerDisconnect,
@@ -160,9 +158,8 @@ export default function Home() {
       setError(null);
       setIsJoining(true); 
       console.log(`Calling rtcJoinRoom for room: ${roomId}, user: ${userId}`);
-      // Call the join function from the hook
-      // The hook internally updates isJoined state and sends WS message
-      rtcJoinRoom(); 
+      // Call the join function from the hook, passing roomId and userId
+      rtcJoinRoom({ roomId, userId }); 
       // We don't setIsJoining(false) here immediately,
       // rely on isJoined from the hook to update the UI state
   };

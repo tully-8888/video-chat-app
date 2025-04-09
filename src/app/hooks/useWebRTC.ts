@@ -9,16 +9,19 @@ interface PeerData {
 }
 
 interface UseWebRTCOptions {
-  roomId: string | null;
-  userId: string | null;
   localStream: MediaStream | null;
   onRemoteStream?: (peerId: string, stream: MediaStream) => void;
   onPeerDisconnect?: (peerId: string) => void;
 }
 
+interface JoinRoomOptions {
+    roomId: string;
+    userId: string;
+}
+
 interface UseWebRTCReturn {
   peers: Map<string, PeerData>; // Map of peerId -> PeerData
-  joinRoom: () => void;
+  joinRoom: (options: JoinRoomOptions) => void;
   leaveRoom: () => void;
   isJoined: boolean;
   webSocketState: string; // Expose WS state for UI feedback
@@ -40,8 +43,6 @@ const peerConfig = {
 };
 
 export function useWebRTC({
-  roomId,
-  userId,
   localStream,
   onRemoteStream,
   onPeerDisconnect,
@@ -49,6 +50,8 @@ export function useWebRTC({
   const [peers, setPeers] = useState<Map<string, PeerData>>(new Map());
   const [isJoined, setIsJoined] = useState(false);
   const peersRef = useRef(peers); // Ref to access current peers in callbacks
+  const roomIdRef = useRef<string | null>(null);
+  const userIdRef = useRef<string | null>(null);
 
   // Keep peersRef updated
   useEffect(() => {
@@ -61,8 +64,8 @@ export function useWebRTC({
 
   // --- Peer Management Functions (defined before use in handleWebSocketMessage) ---
   const createPeer = useCallback((peerId: string, initiator: boolean) => {
-    if (!localStream || !userId) {
-      console.error('Cannot create peer: Missing localStream or userId');
+    if (!localStream || !userIdRef.current) {
+      console.error('Cannot create peer: Missing localStream or current userId');
       return;
     }
     if (peersRef.current.has(peerId)) {
@@ -126,7 +129,7 @@ export function useWebRTC({
       return updatedPeers;
     });
 
-  }, [localStream, userId, stableOnRemoteStream]); // Removed sendMessage dependency for now
+  }, [localStream, stableOnRemoteStream]); // Removed userId dependency, will use ref
 
   const removePeer = useCallback((peerId: string) => {
     setPeers(prevPeers => {
@@ -180,9 +183,9 @@ export function useWebRTC({
         if (data && Array.isArray(data.userIds)) {
             const { userIds } = data;
             console.log(`Found existing users: ${userIds.join(', ')}`);
-            if (localStream && userId) {
+            if (localStream && userIdRef.current) {
                 userIds.forEach((peerId: string) => {
-                    if (peerId === userId) return; // Don't connect to self
+                    if (peerId === userIdRef.current) return; // Don't connect to self
                     creator(peerId, true); // Use creator ref
                 });
             }
@@ -197,7 +200,7 @@ export function useWebRTC({
         if (data && typeof data.userId === 'string') {
             const { userId: newPeerId } = data;
             console.log(`User joined: ${newPeerId}`);
-            if (localStream && userId && newPeerId !== userId) {
+            if (localStream && userIdRef.current && newPeerId !== userIdRef.current) {
                 // We don't initiate connection here, the newcomer will send the offer
                 // Create peer instance, but set initiator to false
                 creator(newPeerId, false); // Use creator ref
@@ -247,7 +250,7 @@ export function useWebRTC({
       default:
         console.warn(`Unhandled WebSocket message type: ${type}`);
     }
-  }, [localStream, userId]);
+  }, [localStream]); // No longer depends on sendMessage
 
   const { sendMessage, connectionState: webSocketState } = useWebSocket({
     onMessage: handleWebSocketMessage,
@@ -260,13 +263,15 @@ export function useWebRTC({
   }, [sendMessage]);
 
   // --- Room Join/Leave Logic ---
-  const joinRoom = useCallback(() => {
+  const joinRoom = useCallback((options: JoinRoomOptions) => {
+    const { roomId, userId } = options; // Destructure from arguments
+
     if (webSocketState !== 'OPEN') {
       console.error('Cannot join room: WebSocket not open.');
       return;
     }
     if (!roomId || !userId) {
-      console.error('Cannot join room: Missing roomId or userId.');
+      console.error('Cannot join room: Missing roomId or userId in arguments.');
       return;
     }
     if (isJoined) {
@@ -274,10 +279,14 @@ export function useWebRTC({
        return;
     }
 
+    // Store roomId and userId in refs *before* sending message
+    roomIdRef.current = roomId;
+    userIdRef.current = userId;
+
     console.log(`Attempting to join room ${roomId} as ${userId}`);
     sendMessage({ type: 'join', payload: { roomId, userId } });
     setIsJoined(true); // Assume join success for now, handle potential errors via WS message
-  }, [roomId, userId, sendMessage, webSocketState, isJoined]);
+  }, [sendMessage, webSocketState, isJoined]); // sendMessage is a valid dependency here
 
   const leaveRoom = useCallback(() => {
     console.log('Leaving room...');
@@ -296,9 +305,11 @@ export function useWebRTC({
     // sendMessage({ type: 'leave' }); // Server handles disconnect via ws.on('close')
     // If the component unmounts, useWebSocket's cleanup will close the socket.
     // If the hook instance persists, you might need an explicit disconnect function in useWebSocket.
+    // Clear refs on leave
+    roomIdRef.current = null;
+    userIdRef.current = null;
     setIsJoined(false);
   }, []); // No dependencies that should trigger recreation
-
 
   // Effect to leave room on component unmount or when roomId/userId changes
   useEffect(() => {
@@ -308,7 +319,6 @@ export function useWebRTC({
       }
     };
   }, [isJoined, leaveRoom]); // Leave room if isJoined status changes (to false)
-
 
   return {
     peers,
