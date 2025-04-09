@@ -38,56 +38,6 @@ const VideoPlayer = ({ stream, muted = false, className = '' }: { stream: MediaS
   );
 };
 
-const LogWindow = ({
-  logs,
-  onClose,
-  onGetStats,
-}: {
-  logs: { type: 'log' | 'error' | 'warn', message: string, timestamp: number }[];
-  onClose: () => void;
-  onGetStats: () => void;
-}) => {
-  const logContentRef = useRef<HTMLDivElement>(null);
-
-  // Scroll to bottom when logs update
-  useEffect(() => {
-    if (logContentRef.current) {
-      logContentRef.current.scrollTop = logContentRef.current.scrollHeight;
-    }
-  }, [logs]);
-
-  const formatTimestamp = (timestamp: number) => {
-    const date = new Date(timestamp);
-    return `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}:${date.getSeconds().toString().padStart(2, '0')}.${date.getMilliseconds().toString().padStart(3, '0')}`;
-  };
-
-  return (
-    <div className="log-window">
-      <div className="log-header">
-        <h3>Console Logs & Stats</h3>
-        <button onClick={onGetStats} className="stats-button" title="Fetch WebRTC Stats">
-          Get Stats
-        </button>
-        <button onClick={onClose} className="close-log-button" title="Close Logs">
-          &times;
-        </button>
-      </div>
-      <div className="log-content" ref={logContentRef}>
-        {logs.length === 0 ? (
-          <p className="no-logs">No logs yet.</p>
-        ) : (
-          logs.map((log, index) => (
-            <div key={index} className={`log-entry log-${log.type}`}>
-              <span className="log-timestamp">{formatTimestamp(log.timestamp)}</span>
-              <span className={`log-message`}>{log.message}</span>
-            </div>
-          ))
-        )}
-      </div>
-    </div>
-  );
-};
-
 export default function Home() {
   const [roomId, setRoomId] = useState('');
   const [userId, setUserId] = useState('');
@@ -99,9 +49,8 @@ export default function Home() {
   const [isVideoStopped, setIsVideoStopped] = useState(false);
 
   // --- Debugging State ---
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [logs, setLogs] = useState<{ type: 'log' | 'error' | 'warn', message: string, timestamp: number }[]>([]);
-  const [showLogs, setShowLogs] = useState(false);
+  const [showLogs, setShowLogs] = useState(false); // State to control log window visibility
   // -----------------------
 
   // Helper function to add logs
@@ -110,21 +59,17 @@ export default function Home() {
     const message = args.map(arg => {
         try {
             if (arg instanceof Error) return arg.message;
-            // Check for null explicitly before stringifying
             if (typeof arg === 'object' && arg !== null) return JSON.stringify(arg);
-             // Handle primitive types directly
             if (typeof arg === 'string') return arg;
             if (typeof arg === 'number' || typeof arg === 'boolean' || typeof arg === 'undefined' || typeof arg === 'symbol' || typeof arg === 'bigint') return String(arg);
-            // Handle null after the object check
             if (arg === null) return 'null';
-             // Fallback for other types (like functions, though stringify might handle some)
-             return typeof arg; // Or a more descriptive placeholder
+             return typeof arg;
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        } catch (_error) { // Use _error to explicitly ignore
+        } catch (_error) {
             return '[Unserializable]';
         }
     }).join(' ');
-    
+
     setLogs(prevLogs => [
         ...prevLogs.slice(-100), // Keep only the last 100 logs
         {
@@ -291,6 +236,10 @@ export default function Home() {
     // Reset mute/video state visually on leave
     setIsMicMuted(false);
     setIsVideoStopped(false);
+    // Optionally stop local stream tracks on leave
+    localStream?.getTracks().forEach(track => track.stop());
+    setLocalStream(null); // Clear local stream state
+    setShowLogs(false); // Hide logs on leaving room
   };
   
   // Update joining status based on hook state
@@ -335,7 +284,6 @@ export default function Home() {
   const otherRemoteStreams = remoteStreams.size > 1 ? [...remoteStreams.entries()].slice(1) : [];
 
   // Function to get and log WebRTC stats
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const logPeerStats = useCallback(async () => {
     if (!isJoined || peers.size === 0) {
         addLog('warn', 'Cannot get stats: Not in a room or no peers connected.');
@@ -394,6 +342,57 @@ export default function Home() {
     addLog('log', '--- Finished Fetching Stats ---');
 
   }, [peers, isJoined, addLog]);
+
+  // LogWindow component definition moved inside Home
+  const LogWindow = ({
+    logs: currentLogs, // Renamed prop to avoid conflict with state variable
+    onClose,
+    onGetStats,
+  }: {
+    logs: { type: 'log' | 'error' | 'warn', message: string, timestamp: number }[];
+    onClose: () => void;
+    onGetStats: () => void;
+  }) => {
+    const logContentRef = useRef<HTMLDivElement>(null);
+
+    // Scroll to bottom when logs update
+    useEffect(() => {
+      if (logContentRef.current) {
+        logContentRef.current.scrollTop = logContentRef.current.scrollHeight;
+      }
+    }, [currentLogs]); // Depend on the passed prop
+
+    const formatTimestamp = (timestamp: number) => {
+      const date = new Date(timestamp);
+      return `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}:${date.getSeconds().toString().padStart(2, '0')}.${date.getMilliseconds().toString().padStart(3, '0')}`;
+    };
+
+    return (
+      <div className="log-window">
+        <div className="log-header">
+          <h3>Console Logs & Stats</h3>
+          <button onClick={onGetStats} className="stats-button" title="Fetch WebRTC Stats">
+            Get Stats
+          </button>
+          <button onClick={onClose} className="close-log-button" title="Close Logs">
+            &times;
+          </button>
+        </div>
+        <div className="log-content" ref={logContentRef}>
+          {currentLogs.length === 0 ? (
+            <p className="no-logs">No logs yet. Join a room and click Get Stats.</p>
+          ) : (
+            currentLogs.map((log, index) => (
+              <div key={index} className={`log-entry log-${log.type}`}>
+                <span className="log-timestamp">{formatTimestamp(log.timestamp)}</span>
+                <span className={`log-message`}>{log.message}</span>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    );
+  };
 
   return (
     <>
@@ -541,7 +540,7 @@ export default function Home() {
           <LogWindow
               logs={logs}
               onClose={() => setShowLogs(false)}
-              onGetStats={logPeerStats} // Pass the enhanced function
+              onGetStats={logPeerStats}
           />
       )}
 
