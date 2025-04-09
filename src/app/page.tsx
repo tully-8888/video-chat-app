@@ -39,6 +39,23 @@ const VideoPlayer = ({ stream, muted = false, className = '' }: { stream: MediaS
   );
 };
 
+// --- Resolution Presets ---
+type ResolutionPreset = {
+  label: string;
+  width: number;
+  height: number;
+};
+
+const RESOLUTION_PRESETS: ResolutionPreset[] = [
+  { label: '360p', width: 640, height: 360 },
+  { label: '480p', width: 854, height: 480 },
+  { label: '720p', width: 1280, height: 720 },
+  // Add 1080p cautiously, might strain P2P connections
+  // { label: '1080p', width: 1920, height: 1080 }, 
+];
+const DEFAULT_RESOLUTION_INDEX = 1; // Default to 480p
+// ------------------------
+
 export default function Home() {
   const [roomId, setRoomId] = useState('');
   const [userId, setUserId] = useState('');
@@ -66,6 +83,9 @@ export default function Home() {
   const [targetBitrateKbps, setTargetBitrateKbps] = useState<number>(800); // Default: 800 kbps
   const MIN_BITRATE_KBPS = 100;
   const MAX_BITRATE_KBPS = 2500; // 2.5 Mbps max, adjust as needed
+
+  // New state for resolution
+  const [currentResolutionIndex, setCurrentResolutionIndex] = useState<number>(DEFAULT_RESOLUTION_INDEX);
 
   // Helper function to add logs
   const addLog = useCallback((type: 'log' | 'error' | 'warn', ...args: unknown[]) => {
@@ -168,35 +188,93 @@ export default function Home() {
   };
   // -------------------------------
 
-  // Get user media - Now returns the stream or throws error
+  // --- Debounced Resolution Update ---
+  const applyResolutionConstraints = useDebouncedCallback(
+    async (presetIndex: number) => {
+      if (!localStream) {
+        console.warn('Cannot apply resolution: No local stream.');
+        return;
+      }
+      const videoTrack = localStream.getVideoTracks()[0];
+      if (!videoTrack) {
+        console.warn('Cannot apply resolution: No video track found.');
+        return;
+      }
+
+      const selectedPreset = RESOLUTION_PRESETS[presetIndex];
+      if (!selectedPreset) {
+          console.error(`Invalid resolution preset index: ${presetIndex}`);
+          return;
+      }
+
+      const constraints: MediaTrackConstraints = {
+        width: { ideal: selectedPreset.width },
+        height: { ideal: selectedPreset.height },
+        // You could also add frameRate here if desired
+        // frameRate: { ideal: 30 }
+      };
+
+      console.log(`Attempting to apply video constraints: ${JSON.stringify(constraints)}`);
+      try {
+        await videoTrack.applyConstraints(constraints);
+        console.log('Successfully applied video constraints.');
+      } catch (error) {
+        console.error('Failed to apply video constraints:', error);
+        // Optionally revert state or show error to user
+        // For simplicity, we don't revert slider state here
+      }
+    },
+    500 // Debounce for 500ms (applying constraints can be slower)
+  );
+
+  const handleResolutionChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const newIndex = parseInt(event.target.value, 10);
+    setCurrentResolutionIndex(newIndex);
+    applyResolutionConstraints(newIndex);
+  };
+  // ---------------------------------
+
+  // Get user media - Now uses the currentResolutionIndex state
   const getMedia = useCallback(async (audio = true, video = true): Promise<MediaStream> => {
     setError(null);
     try {
       console.log(`Requesting local media... Audio: ${audio}, Video: ${video}`);
-      // Stop existing tracks *before* getting new ones
       localStream?.getTracks().forEach(track => track.stop());
 
-      const constraints = { audio, video };
+      const constraints: MediaStreamConstraints = {};
+      if (audio) {
+          constraints.audio = true; // Or add specific audio constraints
+      }
+      if (video) {
+          const selectedPreset = RESOLUTION_PRESETS[currentResolutionIndex];
+          constraints.video = {
+              width: { ideal: selectedPreset.width },
+              height: { ideal: selectedPreset.height },
+              // frameRate: { ideal: 30 } // Optional: Add default frameRate
+          };
+          console.log('Using initial video constraints:', constraints.video);
+      }
+
       if (!audio && !video) {
-          setLocalStream(null);
-          console.log('Cleared local media as audio and video are false.');
-          // Technically shouldn't happen in the join flow, but handle defensively
-          throw new Error("Cannot get media with audio and video both false.");
+        setLocalStream(null);
+        console.log('Cleared local media as audio and video are false.');
+        throw new Error("Cannot get media with audio and video both false.");
       }
 
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
       console.log('Local media obtained:', stream.id);
-      setLocalStream(stream); // Set the state
-      return stream; // Return the obtained stream
+      setLocalStream(stream);
+      return stream;
     } catch (err) {
       console.error('Failed to get local stream:', err);
       const errorMessage = err instanceof Error ? err.message : String(err);
-      const userFriendlyError = `Failed to get camera/microphone: ${errorMessage}. Please check permissions.`;
+      const userFriendlyError = `Failed to get camera/microphone: ${errorMessage}. Please check permissions and device support for resolution.`;
       setError(userFriendlyError);
       setLocalStream(null);
-      throw new Error(userFriendlyError); // Re-throw to stop the join process
+      throw new Error(userFriendlyError);
     }
-  }, [localStream]); // Keep localStream dependency for cleanup
+  // Add currentResolutionIndex dependency
+  }, [localStream, currentResolutionIndex]);
 
   // Set default userId on component mount (client-side only)
   useEffect(() => {
@@ -614,6 +692,24 @@ export default function Home() {
                 <span className="w-16 text-right font-mono">{targetBitrateKbps} kbps</span>
               </div>
               {/* ----------------------------- */}
+
+              {/* --- Resolution Slider Control --- */}
+              <div className="flex items-center gap-2 text-sm">
+                <label htmlFor="resolutionSlider" className="whitespace-nowrap">Resolution:</label>
+                <input
+                  type="range"
+                  id="resolutionSlider"
+                  min={0}
+                  max={RESOLUTION_PRESETS.length - 1}
+                  step={1}
+                  value={currentResolutionIndex}
+                  onChange={handleResolutionChange}
+                  className="w-24 h-2 bg-gray-600 rounded-lg appearance-none cursor-pointer accent-green-500"
+                  aria-label="Video resolution"
+                />
+                <span className="w-12 text-right font-mono">{RESOLUTION_PRESETS[currentResolutionIndex]?.label || 'N/A'}</span>
+              </div>
+              {/* ------------------------------ */}
 
               {/* --- Call Stats Display --- */}
               {callStats && (
