@@ -40,13 +40,7 @@ const VideoPlayer = ({ stream, muted = false }: { stream: MediaStream | null, mu
 
 export default function Home() {
   const [roomId, setRoomId] = useState('');
-  const [userId, setUserId] = useState(() => {
-    // Generate a simple default user ID for convenience
-    if (typeof window !== 'undefined') {
-      return `user_${Math.random().toString(36).substring(2, 9)}`;
-    }
-    return '';
-  });
+  const [userId, setUserId] = useState('');
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isJoining, setIsJoining] = useState(false); // Prevent multiple join attempts
@@ -106,17 +100,23 @@ export default function Home() {
     }
   }, [localStream]);
 
-  // Automatically get media on component mount
+  // Automatically get media and set default userId on component mount
   useEffect(() => {
     if (typeof window !== 'undefined') {
+        // Generate default userId only on the client after mount
+        if (!userId) { // Only set if not already set (e.g., by user input)
+             setUserId(`user_${Math.random().toString(36).substring(2, 9)}`);
+        }
         getMedia();
     }
+    // Cleanup function
     return () => {
       console.log('Cleaning up local stream on unmount');
       localStream?.getTracks().forEach(track => track.stop());
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps 
-  }, []);
+  // Run only once on mount - adjust dependencies if getMedia needs others
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [getMedia]); // Include getMedia, assuming it's stable via useCallback
 
   const handleJoinRoom = () => {
     if (!roomId.trim() || !userId.trim()) {
