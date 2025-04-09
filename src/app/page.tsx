@@ -31,6 +31,9 @@ const VideoPlayer = ({ stream, muted = false }: { stream: MediaStream | null, mu
         backgroundColor: 'black',
         borderRadius: '4px'
       }}
+      onError={(event) => {
+        console.error("Video Player Error:", event);
+      }}
     />
   );
 };
@@ -66,18 +69,14 @@ export default function Home() {
   }, []);
 
   // --- Instantiate the WebRTC Hook ---
-  // We instantiate the hook without passing roomId/userId here.
-  // The actual joining is triggered by the handleJoinRoom button,
-  // which calls rtcJoinRoom. The hook will use the current state
-  // values of roomId and userId when rtcJoinRoom is invoked.
   const { 
     joinRoom: rtcJoinRoom, 
     leaveRoom: rtcLeaveRoom, 
     isJoined, 
     webSocketState
   } = useWebRTC({
-    roomId: roomId, // Pass current state, hook uses it only when joinRoom is called
-    userId: userId,   // Pass current state, hook uses it only when joinRoom is called
+    roomId: roomId, 
+    userId: userId,   
     localStream,
     onRemoteStream: handleRemoteStream,
     onPeerDisconnect: handlePeerDisconnect,
@@ -89,12 +88,11 @@ export default function Home() {
     setError(null);
     try {
       console.log(`Requesting local media... Audio: ${audio}, Video: ${video}`);
-      // Stop existing tracks before getting new stream
       localStream?.getTracks().forEach(track => track.stop());
       
       const constraints = { audio, video };
       if (!audio && !video) {
-        setLocalStream(null); // Clear stream if both are false
+        setLocalStream(null); 
         console.log('Cleared local media as audio and video are false.');
         return; 
       }
@@ -104,27 +102,23 @@ export default function Home() {
       setLocalStream(stream);
     } catch (err) {
       console.error('Failed to get local stream:', err);
-      // Type assertion for error object
       const errorMessage = err instanceof Error ? err.message : String(err);
       setError(`Failed to get camera/microphone: ${errorMessage}. Please check permissions.`);
-      setLocalStream(null); // Ensure local stream is null on error
+      setLocalStream(null); 
     }
-  }, [localStream]); // Dependency on localStream needed to stop previous tracks
+  }, [localStream]);
 
   // Automatically get media on component mount
   useEffect(() => {
     if (typeof window !== 'undefined') {
         getMedia();
     }
-    
-    // Cleanup: stop tracks when component unmounts
     return () => {
       console.log('Cleaning up local stream on unmount');
-      // Check if localStream exists before accessing getTracks
       localStream?.getTracks().forEach(track => track.stop());
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps 
-  }, []); // Run only once on mount
+  }, []);
 
   const handleJoinRoom = () => {
     if (!roomId.trim() || !userId.trim()) {
