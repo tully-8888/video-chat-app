@@ -285,6 +285,7 @@ export default function Home() {
   const otherRemoteStreams = remoteStreams.size > 1 ? [...remoteStreams.entries()].slice(1) : [];
 
   // Function to get and log WebRTC stats
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const logPeerStats = useCallback(async () => {
     if (!isJoined || peers.size === 0) {
         addLog('warn', 'Cannot get stats: Not in a room or no peers connected.');
@@ -443,18 +444,42 @@ export default function Home() {
 
              {/* Controls Bar */}
              <div className="controls-bar">
-                <button onClick={toggleMic} className={`control-button ${isMicMuted ? 'muted' : ''}`}>
-                   {isMicMuted ? 'Unmute' : 'Mute'} {/* Replace with icons later */}
+                <button onClick={toggleMic} className={`control-button ${isMicMuted ? 'muted' : ''}`} title={isMicMuted ? 'Unmute Microphone' : 'Mute Microphone'}>
+                   {/* Mic Icon */}
+                   {isMicMuted ? (
+                       <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="icon">
+                           <path d="M12 1a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3Z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2H3v2a8 8 0 0 0 7 7.93V22h2v-2.07A8 8 0 0 0 21 12v-2h-2Z"></path><line x1="4" x2="20" y1="4" y2="20"></line>
+                       </svg>
+                   ) : (
+                       <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="icon">
+                            <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2H3v2a8 8 0 0 0 7 7.93V22h2v-2.07A8 8 0 0 0 21 12v-2h-2z"></path>
+                       </svg>
+                   )}
                 </button>
-                <button onClick={toggleVideo} className={`control-button ${isVideoStopped ? 'stopped' : ''}`}>
-                   {isVideoStopped ? 'Start Vid' : 'Stop Vid'} {/* Replace with icons later */}
+                <button onClick={toggleVideo} className={`control-button ${isVideoStopped ? 'stopped' : ''}`} title={isVideoStopped ? 'Start Video' : 'Stop Video'}>
+                   {/* Video Icon */}
+                   {isVideoStopped ? (
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="icon">
+                            <path d="M16 16v1a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h2m5.66 0H14a2 2 0 0 1 2 2v3.34l1 1L23 7v10"></path><line x1="1" x2="23" y1="1" y2="23"></line>
+                        </svg>
+                   ) : (
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="icon">
+                             <polygon points="23 7 16 12 23 17 23 7"></polygon><rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect>
+                        </svg>
+                   )}
                 </button>
-                <button onClick={handleLeaveRoom} className="control-button leave">
-                   Leave
+                <button onClick={handleLeaveRoom} className="control-button leave" title="Leave Call">
+                   {/* Leave Icon (Phone Down) */}
+                   <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="icon">
+                        <path d="M10.68 13.31a16 16 0 0 0 3.41 2.69l1.9-1.9a2 2 0 0 1 2.12 0l2.12 2.12a2 2 0 0 1 0 2.83L18.84 20a18.41 18.41 0 0 1-15.37-15.37l1.42-1.42a2 2 0 0 1 2.82 0l2.12 2.12a2 2 0 0 1 0 2.12L8.69 9.31a16 16 0 0 0 2.69 3.4Z"></path><path d="m22 2-8.5 8.5"></path><path d="M13.5 13.5 2 22"></path>
+                    </svg>
                 </button>
                 {/* Debug Toggle Button (In-Call) */}
-                <button onClick={() => setShowLogs(prev => !prev)} className="control-button debug">
-                  Logs {/* Replace with icon later */}
+                <button onClick={() => setShowLogs(prev => !prev)} className="control-button debug" title={showLogs ? 'Hide Logs' : 'Show Logs'}>
+                  {/* Logs Icon (File Text) */}
+                   <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="icon">
+                        <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" x2="8" y1="13" y2="13"></line><line x1="16" x2="8" y1="17" y2="17"></line><line x1="10" x2="8" y1="9" y2="9"></line>
+                    </svg>
                 </button>
              </div>
           </div>
