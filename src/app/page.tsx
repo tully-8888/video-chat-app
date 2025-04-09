@@ -856,11 +856,14 @@ export default function Home() {
           position: absolute;
           bottom: 0;
           left: 0;
+          right: 0; /* Ensure it spans full width for padding */
           width: 100%;
           display: flex;
           justify-content: center;
           align-items: center;
-          padding: 15px 0;
+          padding: 15px 0; /* Existing top/bottom padding (will be overridden by safe area below) */
+          padding-bottom: env(safe-area-inset-bottom, 15px); /* Add safe area padding with fallback */
+          box-sizing: border-box; /* Include padding in the element's total width and height */
           gap: 15px;
           background: linear-gradient(to top, rgba(0, 0, 0, 0.7), rgba(0, 0, 0, 0)); /* Gradient background */
           z-index: 20;
@@ -925,7 +928,8 @@ export default function Home() {
            .controls-bar {
              /* Maybe less prominent background on desktop */
              background: rgba(0, 0, 0, 0.1);
-             padding: 10px 0;
+             padding: 10px 0; /* Adjust desktop padding */
+             padding-bottom: env(safe-area-inset-bottom, 10px); /* Also apply safe area here for consistency */
              bottom: 10px; /* Give some space */
              left: 50%;
              transform: translateX(-50%);
