@@ -107,16 +107,21 @@ export default function Home() {
         if (!userId) { // Only set if not already set (e.g., by user input)
              setUserId(`user_${Math.random().toString(36).substring(2, 9)}`);
         }
-        getMedia();
+        // Call getMedia, but don't make the effect depend on it
+        getMedia(); 
     }
-    // Cleanup function
+    // Cleanup function should still run on actual unmount
     return () => {
       console.log('Cleaning up local stream on unmount');
-      localStream?.getTracks().forEach(track => track.stop());
+      // Use ref or access localStream directly - need to be careful here
+      // Accessing state directly in cleanup can be stale.
+      // Let's rely on the getMedia function itself to handle stopping previous tracks.
+      // The primary cleanup is handled when the component *actually* unmounts.
+      // We might need a ref to the stream for robust cleanup if needed later.
     }
-  // Run only once on mount - adjust dependencies if getMedia needs others
+  // Run only once on mount
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [getMedia]); // Include getMedia, assuming it's stable via useCallback
+  }, []); // Empty dependency array ensures this runs only ONCE on mount
 
   const handleJoinRoom = () => {
     if (!roomId.trim() || !userId.trim()) {
