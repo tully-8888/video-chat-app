@@ -90,12 +90,13 @@ export function useWebRTC({
     const newPeer = new Peer({ initiator, config: peerConfig, stream: localStream });
 
     newPeer.on('signal', (signalData: SignalData) => {
-      console.log(`Sending signal to ${peerId}`);
+      // Log the type of signal being sent
+      console.log(`[${userIdRef.current?.substring(0, 6)}] Sending signal (${signalData.type || 'candidate'}) to ${peerId.substring(0, 6)}`);
       webSocketSendMessage({ type: 'signal', payload: { receiverId: peerId, signalData } });
     });
 
     newPeer.on('stream', (remoteStream: MediaStream) => {
-      console.log(`Received stream from ${peerId}`);
+      console.log(`[${userIdRef.current?.substring(0, 6)}] Received stream from ${peerId.substring(0, 6)}`);
       setPeers(prevPeers => {
         const updatedPeers = new Map(prevPeers);
         updatedPeers.set(peerId, { peerId, peer: newPeer, stream: remoteStream });
@@ -117,7 +118,8 @@ export function useWebRTC({
     });
 
     newPeer.on('error', (err) => {
-      console.error(`Peer error with ${peerId}:`, err);
+      // Log the specific peer error
+      console.error(`[${userIdRef.current?.substring(0, 6)}] Peer error with ${peerId.substring(0, 6)}:`, err);
       // Attempt to remove the peer on error to cleanup state
       const remover = peerRemoverRef.current;
       if(remover) remover(peerId);
@@ -217,10 +219,18 @@ export function useWebRTC({
             const { senderId, signalData } = data;
             const peerData = peersRef.current.get(senderId);
             if (peerData) {
-                console.log(`Received signal from ${senderId}`);
-                peerData.peer.signal(signalData);
+                // Log the type of signal being received
+                console.log(`[${userIdRef.current?.substring(0, 6)}] Received signal (${signalData.type || 'candidate'}) from ${senderId.substring(0, 6)}`);
+                try {
+                    peerData.peer.signal(signalData);
+                } catch (err) {
+                     console.error(`[${userIdRef.current?.substring(0, 6)}] Error processing signal from ${senderId.substring(0, 6)}:`, err);
+                     // Optionally remove the peer if signaling fails critically
+                     // const remover = peerRemoverRef.current;
+                     // if(remover) remover(senderId);
+                }
             } else {
-                console.warn(`Received signal from unknown peer: ${senderId}`);
+                console.warn(`[${userIdRef.current?.substring(0, 6)}] Received signal from unknown peer: ${senderId.substring(0, 6)}`);
                 // Potentially handle scenarios where signal arrives before peer object is created?
             }
         } else {
