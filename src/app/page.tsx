@@ -47,6 +47,69 @@ export default function Home() {
   const [isMicMuted, setIsMicMuted] = useState(false);
   const [isVideoStopped, setIsVideoStopped] = useState(false);
 
+  // --- Debugging State ---
+  const [logs, setLogs] = useState<{ type: 'log' | 'error' | 'warn', message: string, timestamp: number }[]>([]);
+  const [showLogs, setShowLogs] = useState(false);
+  // -----------------------
+
+  // Helper function to add logs
+  const addLog = useCallback((type: 'log' | 'error' | 'warn', ...args: unknown[]) => {
+    // Simple serialization for objects
+    const message = args.map(arg => {
+        try {
+            if (arg instanceof Error) return arg.message;
+            // Check for null explicitly before stringifying
+            if (typeof arg === 'object' && arg !== null) return JSON.stringify(arg);
+             // Handle primitive types directly
+            if (typeof arg === 'string') return arg;
+            if (typeof arg === 'number' || typeof arg === 'boolean' || typeof arg === 'undefined' || typeof arg === 'symbol' || typeof arg === 'bigint') return String(arg);
+            // Handle null after the object check
+            if (arg === null) return 'null';
+             // Fallback for other types (like functions, though stringify might handle some)
+             return typeof arg; // Or a more descriptive placeholder
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        } catch (_error) { // Use _error to explicitly ignore
+            return '[Unserializable]';
+        }
+    }).join(' ');
+    
+    setLogs(prevLogs => [
+        ...prevLogs.slice(-100), // Keep only the last 100 logs
+        {
+            type,
+            message,
+            timestamp: Date.now()
+        }
+    ]);
+  }, []); // No dependencies, safe to keep empty
+
+  // Override console methods to capture logs
+  useEffect(() => {
+    const originalLog = console.log;
+    const originalError = console.error;
+    const originalWarn = console.warn;
+
+    console.log = (...args) => {
+      originalLog.apply(console, args);
+      addLog('log', ...args);
+    };
+    console.error = (...args) => {
+      originalError.apply(console, args);
+      addLog('error', ...args);
+    };
+    console.warn = (...args) => {
+      originalWarn.apply(console, args);
+      addLog('warn', ...args);
+    };
+
+    // Cleanup: Restore original methods on unmount
+    return () => {
+      console.log = originalLog;
+      console.error = originalError;
+      console.warn = originalWarn;
+    };
+  }, [addLog]); // Depend on addLog
+
   const handleRemoteStream = useCallback((peerId: string, stream: MediaStream) => {
     console.log('New remote stream received from:', peerId);
     setRemoteStreams(prev => new Map(prev).set(peerId, stream));
@@ -265,6 +328,10 @@ export default function Home() {
             </button>
             {webSocketState === 'CONNECTING' && <p className="status-text">Connecting to server...</p>}
             {webSocketState !== 'OPEN' && webSocketState !== 'CONNECTING' && <p className="status-text error">Cannot connect to signaling server.</p>}
+            {/* Debug Toggle Button (Pre-Join) */}
+            <button onClick={() => setShowLogs(prev => !prev)} className="debug-toggle-button pre-join-debug">
+                 {showLogs ? 'Hide Logs' : 'Show Logs'}
+            </button>
           </div>
 
         ) : (
@@ -321,6 +388,10 @@ export default function Home() {
                 </button>
                 <button onClick={handleLeaveRoom} className="control-button leave">
                    Leave
+                </button>
+                {/* Debug Toggle Button (In-Call) */}
+                <button onClick={() => setShowLogs(prev => !prev)} className="control-button debug">
+                  Logs {/* Replace with icon later */}
                 </button>
              </div>
           </div>
@@ -634,6 +705,12 @@ export default function Home() {
         .control-button.leave:hover {
           background-color: #dc2626; /* Darker red */
         }
+        .control-button.debug {
+            background-color: rgba(255, 255, 100, 0.15); /* Slightly different color for debug */
+        }
+        .control-button.debug:hover {
+             background-color: rgba(255, 255, 100, 0.3);
+        }
 
         /* Responsive Adjustments */
         @media (min-width: 768px) {
@@ -679,6 +756,113 @@ export default function Home() {
             }
         }
 
+        /* Debug Toggle Button (Pre-Join) */
+        .debug-toggle-button {
+            background: none;
+            border: 1px solid var(--border);
+            color: var(--foreground-muted);
+            padding: 5px 10px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.8em;
+            transition: all 0.2s ease;
+        }
+        .debug-toggle-button:hover {
+            background-color: var(--background-input);
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+        .pre-join-debug {
+           margin-top: 20px; /* Space below join form */
+           position: absolute; /* Position independently */
+           bottom: 20px;
+           left: 50%;
+           transform: translateX(-50%);
+        }
+
+        /* Log Window Styles */
+        .log-window {
+            position: fixed; /* Overlay */
+            bottom: 20px;
+            right: 20px;
+            width: 90%;
+            max-width: 500px;
+            height: 300px;
+            background-color: rgba(30, 30, 30, 0.95); /* Dark semi-transparent */
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+            z-index: 100;
+            display: flex;
+            flex-direction: column;
+            backdrop-filter: blur(5px);
+            overflow: hidden; /* Contain children */
+        }
+        .log-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 15px;
+            background-color: rgba(0, 0, 0, 0.2);
+            border-bottom: 1px solid var(--border);
+            flex-shrink: 0;
+        }
+        .log-header h3 {
+            margin: 0;
+            font-size: 1em;
+            font-weight: 600;
+        }
+        .close-log-button {
+            background: none;
+            border: none;
+            color: var(--foreground-muted);
+            font-size: 1.5em;
+            line-height: 1;
+            cursor: pointer;
+            padding: 0 5px;
+        }
+        .close-log-button:hover {
+            color: var(--foreground);
+        }
+        .log-content {
+            padding: 10px 15px;
+            overflow-y: auto;
+            flex-grow: 1;
+            font-family: monospace;
+            font-size: 0.85em;
+        }
+        .log-entry {
+            margin: 0 0 5px;
+            padding: 2px 0;
+            white-space: pre-wrap; /* Wrap long lines */
+            word-break: break-all; /* Break long words */
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05); /* Subtle separator */
+        }
+        .log-entry:last-child {
+            border-bottom: none;
+        }
+        .log-timestamp {
+            color: var(--foreground-muted);
+            margin-right: 10px;
+            font-size: 0.9em;
+        }
+        .log-message {
+            /* Default color handled by log type */
+        }
+        .log-log .log-message {
+            color: var(--foreground);
+        }
+        .log-warn .log-message {
+            color: var(--color-warning);
+        }
+        .log-error .log-message {
+            color: var(--color-error);
+        }
+        .no-logs {
+            color: var(--foreground-muted);
+            text-align: center;
+            margin-top: 20px;
+        }
 
       `}</style>
     </>
