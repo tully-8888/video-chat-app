@@ -74,99 +74,99 @@ export default function Home() {
   });
   // -------------------------------------
 
-  // Get user media
-  const getMedia = useCallback(async (audio = true, video = true) => {
+  // Get user media - Now returns the stream or throws error
+  const getMedia = useCallback(async (audio = true, video = true): Promise<MediaStream> => {
     setError(null);
     try {
       console.log(`Requesting local media... Audio: ${audio}, Video: ${video}`);
+      // Stop existing tracks *before* getting new ones
       localStream?.getTracks().forEach(track => track.stop());
-      
+
       const constraints = { audio, video };
       if (!audio && !video) {
-        setLocalStream(null); 
-        console.log('Cleared local media as audio and video are false.');
-        return; 
+          setLocalStream(null);
+          console.log('Cleared local media as audio and video are false.');
+          // Technically shouldn't happen in the join flow, but handle defensively
+          throw new Error("Cannot get media with audio and video both false.");
       }
-      
+
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
       console.log('Local media obtained:', stream.id);
-      setLocalStream(stream);
+      setLocalStream(stream); // Set the state
+      return stream; // Return the obtained stream
     } catch (err) {
       console.error('Failed to get local stream:', err);
       const errorMessage = err instanceof Error ? err.message : String(err);
-      setError(`Failed to get camera/microphone: ${errorMessage}. Please check permissions.`);
-      setLocalStream(null); 
+      const userFriendlyError = `Failed to get camera/microphone: ${errorMessage}. Please check permissions.`;
+      setError(userFriendlyError);
+      setLocalStream(null);
+      throw new Error(userFriendlyError); // Re-throw to stop the join process
     }
-  }, [localStream]);
+  }, [localStream]); // Keep localStream dependency for cleanup
 
-  // Automatically get media and set default userId on component mount
+  // Set default userId on component mount (client-side only)
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-        // Generate default userId only on the client after mount
-        if (!userId) { // Only set if not already set (e.g., by user input)
-             setUserId(`user_${Math.random().toString(36).substring(2, 9)}`);
-        }
-        // Call getMedia, but don't make the effect depend on it
-        getMedia(); 
+    if (typeof window !== 'undefined' && !userId) {
+        setUserId(`user_${Math.random().toString(36).substring(2, 9)}`);
     }
-    // Cleanup function should still run on actual unmount
-    return () => {
-      console.log('Cleaning up local stream on unmount');
-      // Use ref or access localStream directly - need to be careful here
-      // Accessing state directly in cleanup can be stale.
-      // Let's rely on the getMedia function itself to handle stopping previous tracks.
-      // The primary cleanup is handled when the component *actually* unmounts.
-      // We might need a ref to the stream for robust cleanup if needed later.
-    }
-  // Run only once on mount
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // Empty dependency array ensures this runs only ONCE on mount
+    // NO LONGER CALLS getMedia here
 
-  const handleJoinRoom = () => {
+    // Cleanup function: stop tracks if component unmounts unexpectedly
+    // Use a ref to the stream for reliable cleanup
+    const streamRef = { current: localStream }; 
+    return () => {
+      console.log('Cleaning up local stream on unmount/re-render');
+      streamRef.current?.getTracks().forEach(track => track.stop());
+    }
+  // localStream dependency ensures ref is updated if stream changes
+  // userId dependency ensures effect runs if userId changes externally
+  }, [userId, localStream]); 
+
+  const handleJoinRoom = async () => { // Make async
     if (!roomId.trim() || !userId.trim()) {
       setError('Please enter both Room ID and User ID.');
       return;
     }
-    if (!localStream) {
-      // Try getting media again if missing
-      console.log('Local stream missing, attempting to get media again...')
-      getMedia().then(() => {
-          // Check again after attempting to get media
-          if (!localStream) {
-             setError('Cannot join room: Local media (camera/mic) not available. Please grant permissions and refresh.');
-             return;
-          }
-          // If media acquired now, proceed to join (check WS state etc.)
-          proceedToJoin(); 
-      }).catch(err => {
-          console.error('Error trying to get media again:', err);
-          setError('Failed to acquire camera/microphone for joining.');
-      });
-      return; // Exit for now, let the async getMedia handle it
+    if (webSocketState !== 'OPEN') {
+      setError('Cannot join room: Not connected to signaling server.');
+      return;
     }
-    // If localStream exists, proceed directly
-    proceedToJoin();
+    if (isJoining || isJoined) {
+      console.warn('Already joining or joined.');
+      return;
+    }
+
+    setError(null);
+    setIsJoining(true); 
+
+    try {
+        console.log('Attempting to get media before joining...');
+        const stream = await getMedia(); // Await media access HERE
+        
+        if (!stream) { 
+             // Should be caught by getMedia's throw, but double-check
+             throw new Error('Media stream not available after request.');
+        }
+
+        // If media acquired, proceed to join
+        console.log(`Media acquired, calling rtcJoinRoom for room: ${roomId}, user: ${userId}`);
+        // Call the join function from the hook, passing roomId and userId
+        // The hook uses the `localStream` state variable which `getMedia` updated.
+        rtcJoinRoom({ roomId, userId });
+        // `isJoined` state from the hook will eventually set isJoining to false
+
+    } catch (err) {
+        console.error('Failed to join room (likely media error):', err);
+        // setError should have been set within getMedia
+        if (!error) { // Set a generic error if getMedia didn't
+             setError('Failed to join room. Could not access camera/microphone.');
+        }
+        setIsJoining(false); // Stop joining attempt on error
+    }
   };
 
-  // Helper function to contain the joining logic after checks
-  const proceedToJoin = () => {
-      if (webSocketState !== 'OPEN') {
-        setError('Cannot join room: Not connected to signaling server.');
-        return;
-      }
-      if (isJoining || isJoined) {
-        console.warn('Already joining or joined.');
-        return;
-      }
-      
-      setError(null);
-      setIsJoining(true); 
-      console.log(`Calling rtcJoinRoom for room: ${roomId}, user: ${userId}`);
-      // Call the join function from the hook, passing roomId and userId
-      rtcJoinRoom({ roomId, userId }); 
-      // We don't setIsJoining(false) here immediately,
-      // rely on isJoined from the hook to update the UI state
-  };
+  // Remove the separate proceedToJoin function, logic is now in handleJoinRoom
+  // const proceedToJoin = () => { ... }; 
 
   const handleLeaveRoom = () => {
     rtcLeaveRoom();
@@ -232,9 +232,11 @@ export default function Home() {
                 <strong>Error:</strong> {error}
               </p>
             )}
+            {/* REMOVED WebSocket status display
             <p className="ws-status">
               WebSocket: <span className={`status-${webSocketState.toLowerCase()}`}>{webSocketState}</span>
             </p>
+            */}
 
             <div className="input-group">
               <input
@@ -338,18 +340,18 @@ export default function Home() {
         }
         :global(:root) {
             /* Define theme variables if not already globally defined */
-             --background: #1a1a1a;
-             --background-secondary: #2a2a2a;
-             --background-input: #333;
-             --foreground: #eaeaea;
-             --foreground-muted: #888888;
-             --border: #444;
-             --accent: #3b82f6; /* Blue */
-             --color-error: #ef4444; /* Red */
-             --color-warning: #fbbf24; /* Amber */
-             --color-success: #22c55e; /* Green */
-             --background-disabled: #555;
-             --foreground-disabled: #999;
+             --background: #121212; /* Slightly darker base */
+             --background-secondary: #1e1e1e; /* Darker card */
+             --background-input: #2c2c2c; /* Slightly lighter input */
+             --foreground: #e0e0e0; /* Slightly softer white */
+             --foreground-muted: #a0a0a0; /* Adjusted muted */
+             --border: #3a3a3a; /* Softer border */
+             --accent: #007aff; /* Apple-like blue */
+             --color-error: #ff3b30; /* Apple-like red */
+             --color-warning: #ff9500; /* Apple-like orange */
+             --color-success: #34c759; /* Apple-like green */
+             --background-disabled: #444;
+             --foreground-disabled: #888;
         }
 
         /* Main Container Layouts */
@@ -364,6 +366,8 @@ export default function Home() {
           justify-content: center;
           align-items: center;
           padding: 20px;
+          /* Add a subtle background gradient or image maybe? */
+          background: linear-gradient(135deg, #1a1a1a 0%, #121212 100%);
         }
          .main-container.in-call {
            /* Layout handled by .call-container */
@@ -372,23 +376,31 @@ export default function Home() {
         /* Pre-Join Screen Styles */
         .join-container {
           background-color: var(--background-secondary);
-          padding: 30px 40px;
-          border-radius: 12px;
-          box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+          padding: 40px 50px; /* Increase padding */
+          border-radius: 16px; /* Larger radius */
+          box-shadow: 0 15px 35px rgba(0, 0, 0, 0.3); /* Deeper shadow */
           text-align: center;
-          max-width: 450px;
+          max-width: 480px; /* Slightly wider */
           width: 100%;
+          border: 1px solid var(--border);
+          transform: scale(1); /* Base for potential animation */
+          transition: transform 0.3s ease-out;
         }
+        /* Optional: slight scale effect on hover */
+        /* .join-container:hover {
+          transform: scale(1.02);
+        } */
         .title {
           margin: 0 0 10px;
-          font-size: 2.5em;
+          font-size: 2.8em; /* Larger title */
           font-weight: 600;
-          color: var(--foreground);
+          color: var(--accent); /* Use accent for title */
+          letter-spacing: -0.5px;
         }
         .subtitle {
-          margin: 0 0 25px;
+          margin: 0 0 35px; /* More space */
           color: var(--foreground-muted);
-          font-size: 1em;
+          font-size: 1.1em;
         }
         .input-group {
           display: flex;
@@ -397,9 +409,9 @@ export default function Home() {
           margin-bottom: 25px;
         }
         .input-field {
-          padding: 12px 15px;
+          padding: 14px 18px; /* More padding */
           border: 1px solid var(--border);
-          border-radius: 8px;
+          border-radius: 10px; /* More rounded */
           background-color: var(--background-input);
           color: var(--foreground);
           font-size: 1em;
@@ -408,22 +420,27 @@ export default function Home() {
         .input-field:focus {
           outline: none;
           border-color: var(--accent);
-          box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.3);
+          box-shadow: 0 0 0 4px rgba(0, 122, 255, 0.2); /* Accent shadow */
         }
         .join-button {
-          padding: 12px 25px;
+          padding: 15px 25px; /* Taller button */
           border: none;
-          border-radius: 8px;
+          border-radius: 10px; /* Match inputs */
           background-color: var(--accent);
           color: white;
-          font-size: 1.1em;
-          font-weight: 500;
+          font-size: 1.2em; /* Bigger text */
+          font-weight: 600; /* Bolder text */
           cursor: pointer;
-          transition: background-color 0.2s ease, opacity 0.2s ease;
+          transition: background-color 0.2s ease, opacity 0.2s ease, transform 0.1s ease;
           width: 100%;
+          margin-top: 10px; /* Space above button */
         }
         .join-button:hover:not(:disabled) {
-          background-color: #2563eb; /* Darker blue */
+          background-color: #005bb5; /* Darker accent */
+          transform: translateY(-1px); /* Subtle lift */
+        }
+        .join-button:active:not(:disabled) {
+          transform: translateY(0px); /* Press down */
         }
         .join-button:disabled {
           background-color: var(--background-disabled);
@@ -441,15 +458,6 @@ export default function Home() {
            text-align: left;
            font-size: 0.9em;
         }
-         .ws-status {
-           margin-bottom: 20px;
-           font-size: 0.9em;
-           color: var(--foreground-muted);
-         }
-         .ws-status span { font-weight: bold; }
-         .ws-status .status-connecting { color: var(--color-warning); }
-         .ws-status .status-open { color: var(--color-success); }
-         .ws-status .status-closing, .ws-status .status-closed { color: var(--color-error); }
          .status-text {
              margin-top: 15px;
              font-size: 0.9em;
