@@ -28,19 +28,30 @@ interface UseWebRTCReturn {
   setVideoBitrate: (bitrate: number) => Promise<void>; // Add bitrate function
 }
 
-// Configuration for STUN servers (use public ones for now)
+// Configuration for STUN/TURN servers
 const peerConfig = {
   iceServers: [
+    // --- Curated List of Public STUN Servers ---
+    // Reference: Primarily from https://gist.github.com/mondain/b0ec1cf5f60ae726202e
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
-    // Add more STUN servers if needed
-    // Consider adding TURN servers here if reliability over P2P is critical
-    // { 
-    //   urls: 'turn:your-turn-server.com:3478', 
-    //   username: 'your-username',
-    //   credential: 'your-password' 
-    // },
+    { urls: 'stun:stun2.l.google.com:19302' },
+    { urls: 'stun:stun3.l.google.com:19302' },
+    { urls: 'stun:stun4.l.google.com:19302' },
+    { urls: 'stun:stun.services.mozilla.com' }, // Mozilla
+    { urls: 'stun:stun.stunprotocol.org:3478' }, // stunprotocol.org
+    { urls: 'stun:stun.nextcloud.com:443' }, // Nextcloud
+    { urls: 'stun:stun.sipgate.net:3478' }, // Sipgate
+    { urls: 'stun:stun.ekiga.net:3478' }, // Ekiga
+    { urls: 'stun:stun.ideasip.com:3478' }, // Ideasip
+    { urls: 'stun:stun.voiparound.com:3478' }, // Voiparound
+    { urls: 'stun:stun.voipbuster.com:3478' }, // Voipbuster
+    { urls: 'stun:stun.voipstunt.com:3478' }, // Voipstunt
+    { urls: 'stun:stun.counterpath.net:3478' }, // Counterpath
+    { urls: 'stun:stun.voxgratia.org:3478' }, // Voxgratia
+  
   ],
+  
 };
 
 export function useWebRTC({

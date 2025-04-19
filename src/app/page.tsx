@@ -330,18 +330,15 @@ export default function Home() {
     if (typeof window !== 'undefined' && !userId) {
         setUserId(`user_${Math.random().toString(36).substring(2, 9)}`);
     }
-    // NO LONGER CALLS getMedia here
 
-    // Cleanup function: stop tracks if component unmounts unexpectedly
-    // Use a ref to the stream for reliable cleanup
-    const streamRef = { current: localStream };
-    return () => {
-      console.log('Cleaning up local stream on unmount/re-render');
-      streamRef.current?.getTracks().forEach(track => track.stop());
-    }
-  // localStream dependency ensures ref is updated if stream changes
-  // userId dependency ensures effect runs if userId changes externally
-  }, [userId, localStream]);
+    // The stream cleanup is handled by getMedia (for replacements)
+    // and handleLeaveRoom (for explicit leaves / unmount).
+    // This effect should only focus on setting the userId on mount.
+    // Remove the problematic cleanup function and localStream dependency.
+
+    // No return statement needed here unless there's specific non-stream cleanup.
+
+  }, [userId]); // Remove localStream from dependencies
 
   // --- Effect to Enumerate Devices and Set Initial Camera ---
   useEffect(() => {
