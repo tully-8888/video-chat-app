@@ -6,7 +6,18 @@ import { useDebouncedCallback } from 'use-debounce'; // Import debounce hook
 import { useWebRTC } from './hooks/useWebRTC';
 import type { Instance as PeerInstance } from 'simple-peer'; // Import PeerInstance type
 import { v4 as uuidv4 } from 'uuid'; // Import UUID for generating room IDs
-import { Video, Keyboard } from 'lucide-react'; // Import icons
+import { 
+  Video, 
+  Keyboard, 
+  Mic,             // Added
+  MicOff,          // Added
+  VideoOff,        // Added
+  LogOut,          // Added
+  ListFilter,      // Added
+  BarChartHorizontal, // Added
+  X,               // Added
+  RefreshCw        // Added
+} from 'lucide-react'; // Import icons
 import { ToastContainer, toast } from 'react-toastify'; // Import react-toastify
 import 'react-toastify/dist/ReactToastify.css'; // Import default CSS
 
@@ -75,6 +86,12 @@ export default function Home() {
   const [remoteStreams, setRemoteStreams] = useState<Map<string, MediaStream>>(new Map());
   const [isMicMuted, setIsMicMuted] = useState(false);
   const [isVideoStopped, setIsVideoStopped] = useState(false);
+
+  // --- State for Camera Switching ---
+  const [videoDevices, setVideoDevices] = useState<MediaDeviceInfo[]>([]);
+  const [currentVideoDeviceId, setCurrentVideoDeviceId] = useState<string | null>(null);
+  const [hasMultipleCameras, setHasMultipleCameras] = useState(false);
+  // --------------------------------
 
   // --- Debugging State ---
   const [logs, setLogs] = useState<{ type: 'log' | 'error' | 'warn', message: string, timestamp: number }[]>([]);
@@ -305,7 +322,8 @@ export default function Home() {
       throw new Error(userFriendlyError);
     }
   // Add currentFrameRateIndex dependency
-  }, [localStream, currentResolutionIndex, currentFrameRateIndex]);
+  // Add currentVideoDeviceId dependency
+  }, [localStream, currentResolutionIndex, currentFrameRateIndex, currentVideoDeviceId]);
 
   // Set default userId on component mount (client-side only)
   useEffect(() => {
@@ -324,6 +342,72 @@ export default function Home() {
   // localStream dependency ensures ref is updated if stream changes
   // userId dependency ensures effect runs if userId changes externally
   }, [userId, localStream]);
+
+  // --- Effect to Enumerate Devices and Set Initial Camera ---
+  useEffect(() => {
+    if (!localStream || typeof navigator === 'undefined' || !navigator.mediaDevices?.enumerateDevices) {
+      return; // Need stream and API support
+    }
+
+    const enumerateAndSet = async () => {
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const videoInputs = devices.filter(device => device.kind === 'videoinput');
+        
+        console.log('Available video input devices:', videoInputs);
+        setVideoDevices(videoInputs);
+
+        if (videoInputs.length > 1) {
+          setHasMultipleCameras(true);
+          console.log('Multiple cameras detected.');
+        } else {
+          setHasMultipleCameras(false);
+          console.log('Single or no camera detected.');
+        }
+
+        // Set the current device ID based on the existing stream
+        const currentTrack = localStream.getVideoTracks()[0];
+        if (currentTrack) {
+          const currentSettings = currentTrack.getSettings();
+          if (currentSettings.deviceId && !currentVideoDeviceId) { // Set only if not already set
+            console.log('Setting initial camera device ID:', currentSettings.deviceId);
+            setCurrentVideoDeviceId(currentSettings.deviceId);
+          } else if (!currentSettings.deviceId) {
+            console.warn('Could not get device ID from initial stream track.');
+          }
+        } else {
+           console.warn('No video track found in initial stream to set device ID.');
+        }
+
+      } catch (err) {
+        console.error('Error enumerating devices:', err);
+        setHasMultipleCameras(false); // Assume single camera on error
+      }
+    };
+
+    enumerateAndSet();
+  // Run only when localStream is initially set or potentially changes significantly
+  // Do NOT include currentVideoDeviceId here to avoid loops
+  }, [localStream]); 
+
+  // --- Effect to re-acquire media when camera device changes ---
+  useEffect(() => {
+    // Only run if the device ID changes *after* the initial stream is set
+    // and the user is considered "in" the call (localStream exists).
+    if (currentVideoDeviceId && localStream && hasMultipleCameras) {
+      // Check if the stream's current device ID matches the selected one.
+      // If they don't match, it means we need to get the new stream.
+      const currentTrackDeviceId = localStream.getVideoTracks()[0]?.getSettings().deviceId;
+      if (currentTrackDeviceId && currentTrackDeviceId !== currentVideoDeviceId) {
+        console.log(`Current video device ID (${currentVideoDeviceId}) differs from stream's track (${currentTrackDeviceId}). Re-acquiring media.`);
+        getMedia().catch(err => {
+            console.error("Error getting media after device switch:", err);
+            // Handle potential error, maybe revert device ID or show toast
+        });
+      }
+    }
+    // Depend only on currentVideoDeviceId and whether we *have* a stream and multiple cameras
+  }, [currentVideoDeviceId, localStream, hasMultipleCameras, getMedia]);
 
   // --- Refactored Join Logic ---
   const initiateJoin = useCallback(async (targetRoomId: string) => {
@@ -466,6 +550,26 @@ export default function Home() {
     }
   }, [localStream]);
 
+  // --- Switch Camera Function ---
+  const switchCamera = useCallback(() => {
+    if (!hasMultipleCameras || videoDevices.length < 2) {
+      console.warn('Camera switch called with insufficient devices.');
+      return;
+    }
+
+    const currentDeviceIndex = videoDevices.findIndex(device => device.deviceId === currentVideoDeviceId);
+    const nextDeviceIndex = (currentDeviceIndex + 1) % videoDevices.length;
+    const nextDeviceId = videoDevices[nextDeviceIndex]?.deviceId;
+
+    if (nextDeviceId && nextDeviceId !== currentVideoDeviceId) {
+      console.log(`Switching camera to device ID: ${nextDeviceId}`);
+      setCurrentVideoDeviceId(nextDeviceId); // This state change triggers the useEffect above
+    } else {
+      console.warn('Could not determine next camera device ID or ID is the same.');
+    }
+  }, [hasMultipleCameras, videoDevices, currentVideoDeviceId]);
+  // --------------------------
+
   // Function to get and log WebRTC stats
   const logPeerStats = useCallback(async () => {
     if (!isJoined || peers.size === 0) {
@@ -581,24 +685,38 @@ export default function Home() {
     };
 
     return (
-      <div className="log-window">
-        <div className="log-header">
-          <h3>Console Logs & Stats</h3>
-          <button onClick={onGetStats} className="stats-button" title="Fetch WebRTC Stats">
-            Get Stats
-          </button>
-          <button onClick={onClose} className="close-log-button" title="Close Logs">
-            &times;
-          </button>
+      // Updated Log Window Styling
+      <div className="log-window bg-gray-800 border border-gray-700 rounded-lg shadow-lg mt-4 text-gray-300"> 
+        <div className="log-header flex justify-between items-center p-2 border-b border-gray-700">
+          <h3 className="text-base font-semibold text-gray-100 ml-2">Console Logs & Stats</h3>
+          <div className="flex items-center gap-1">
+             <button 
+                onClick={onGetStats} 
+                className="p-1.5 rounded-full text-gray-400 hover:bg-gray-700/50 hover:text-emerald-400 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500 focus:ring-offset-gray-800 transition-colors" 
+                title="Fetch WebRTC Stats"
+             >
+                <BarChartHorizontal size={18} />
+             </button>
+             <button 
+                onClick={onClose} 
+                className="p-1.5 rounded-full text-gray-400 hover:bg-gray-700/50 hover:text-red-400 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 focus:ring-offset-gray-800 transition-colors" 
+                title="Close Logs"
+             >
+                <X size={18} />
+             </button>
+          </div>
         </div>
-        <div className="log-content" ref={logContentRef}>
+        <div className="log-content p-3 text-xs max-h-48 overflow-y-auto font-mono" ref={logContentRef}>
           {currentLogs.length === 0 ? (
-            <p className="no-logs">No logs yet. Join a room and click Get Stats.</p>
+            <p className="no-logs text-gray-500 italic">No logs yet. Join a room and click Get Stats.</p>
           ) : (
             currentLogs.map((log, index) => (
-              <div key={index} className={`log-entry log-${log.type}`}>
-                <span className="log-timestamp">{formatTimestamp(log.timestamp)}</span>
-                <span className={`log-message`}>{log.message}</span>
+              // Updated Log Entry Styling
+              <div key={index} className={`log-entry flex gap-2 mb-0.5`}>
+                <span className="log-timestamp text-gray-500 flex-shrink-0">{formatTimestamp(log.timestamp)}</span>
+                <span className={`log-message ${
+                  log.type === 'error' ? 'text-red-400' : log.type === 'warn' ? 'text-yellow-400' : 'text-gray-300'
+                }`}>{log.message}</span>
               </div>
             ))
           )}
@@ -666,7 +784,7 @@ export default function Home() {
 
   return (
     // Apply dark theme universally when not joined
-    <div className={`min-h-screen flex flex-col ${!isJoined ? 'bg-gray-950 text-gray-200' : 'bg-gray-900 text-white'}`}> 
+    <div className={`min-h-screen flex flex-col ${!isJoined ? 'bg-gray-950 text-gray-200' : 'bg-gray-900 text-gray-200'}`}> 
       {/* Toast Container added here - configure appearance */}
       <ToastContainer
         position="bottom-right"
@@ -782,13 +900,13 @@ export default function Home() {
           // --- End Dark Theme Join UI ---
         ) : (
           // --- In Call UI (Original Dark Theme) ---
-          <div className="flex-grow flex flex-col bg-gray-900 text-white">
+          <div className="flex-grow flex flex-col bg-gray-900"> 
             {/* --- Video Grid --- */}
             <div className={`flex-grow grid gap-4 ${gridCols} ${gridRows} content-start overflow-hidden mb-4 p-4`}>
               {/* Local Video */}
               <div className={`relative bg-black rounded-lg overflow-hidden shadow-lg ${localVideoSpan} ${videoHeight}`}>
-                <VideoPlayer stream={localStream} muted={true} className="w-full h-full" />
-                <div className="absolute bottom-2 left-2 bg-black bg-opacity-50 text-white text-xs px-2 py-1 rounded">
+                <VideoPlayer stream={localStream} muted={true} className="w-full h-full transform -scale-x-100" />
+                <div className="absolute bottom-2 left-2 bg-black bg-opacity-50 text-white text-xs px-2 py-1 rounded"> 
                   {userId} (You){isMicMuted ? ' [MIC MUTED]' : ''}{isVideoStopped ? ' [CAM OFF]' : ''}
                 </div>
               </div>
@@ -805,42 +923,83 @@ export default function Home() {
             </div>
 
             {/* --- Controls --- */}
-            <div className="bg-gray-800 p-3 rounded-lg shadow-md flex flex-wrap items-center justify-center gap-x-4 gap-y-2"> {/* Adjusted gap */}
-              {/* Mute/Unmute Mic */}
+            <div className="bg-gray-800 p-3 border-t border-gray-700 rounded-t-lg shadow-md flex flex-wrap items-center justify-center gap-3"> 
+              
+              {/* Mute/Unmute Mic Button */}
               <button
                 onClick={toggleMic}
-                className={`px-4 py-2 rounded font-semibold transition-colors duration-200 ${isMicMuted ? 'bg-yellow-600 hover:bg-yellow-700' : 'bg-gray-600 hover:bg-gray-700'}`}
+                title={isMicMuted ? 'Unmute Microphone' : 'Mute Microphone'}
+                // Updated Button Styling: rounded-full, focus ring offset, padding, icons
+                // Conditional styles based on isMicMuted (primary border style when muted, secondary text style when not)
+                className={`flex items-center justify-center gap-2 px-4 py-2 rounded-full font-semibold transition-all duration-200 ease-in-out transform active:scale-95 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500 focus:ring-offset-gray-800 ${
+                  isMicMuted 
+                    ? 'border border-emerald-600 text-emerald-400 hover:bg-emerald-900/40 hover:text-emerald-300 hover:border-emerald-500' 
+                    : 'text-emerald-500 hover:bg-emerald-500/10 hover:text-emerald-400'
+                }`}
               >
-                {isMicMuted ? 'Unmute Mic' : 'Mute Mic'}
+                {isMicMuted ? <MicOff size={18} /> : <Mic size={18} />}
+                {/* Text hidden on smaller screens, shown on md+ */}
+                <span className="hidden sm:inline">{isMicMuted ? 'Unmute' : 'Mute'}</span> 
               </button>
 
-              {/* Stop/Start Video */}
+              {/* Stop/Start Video Button */}
               <button
                 onClick={toggleVideo}
-                className={`px-4 py-2 rounded font-semibold transition-colors duration-200 ${isVideoStopped ? 'bg-yellow-600 hover:bg-yellow-700' : 'bg-gray-600 hover:bg-gray-700'}`}
+                title={isVideoStopped ? 'Start Video' : 'Stop Video'}
+                // Updated Button Styling: rounded-full, focus ring offset, padding, icons
+                // Conditional styles based on isVideoStopped (primary border style when stopped, secondary text style when running)
+                className={`flex items-center justify-center gap-2 px-4 py-2 rounded-full font-semibold transition-all duration-200 ease-in-out transform active:scale-95 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500 focus:ring-offset-gray-800 ${
+                  isVideoStopped 
+                    ? 'border border-emerald-600 text-emerald-400 hover:bg-emerald-900/40 hover:text-emerald-300 hover:border-emerald-500' 
+                    : 'text-emerald-500 hover:bg-emerald-500/10 hover:text-emerald-400'
+                }`}
               >
-                {isVideoStopped ? 'Start Video' : 'Stop Video'}
+                {isVideoStopped ? <VideoOff size={18} /> : <Video size={18} />}
+                 {/* Text hidden on smaller screens, shown on md+ */}
+                 <span className="hidden sm:inline">{isVideoStopped ? 'Video On' : 'Video Off'}</span>
               </button>
-
-              {/* Leave Room */}
-              <button
-                onClick={handleLeaveRoom}
-                className="px-4 py-2 rounded bg-red-600 hover:bg-red-700 font-semibold transition-colors duration-200"
-              >
-                Leave Room
-              </button>
-
-              {/* Show/Hide Logs */}
+              
+              {/* Show/Hide Logs Button */}
               <button
                 onClick={() => setShowLogs(!showLogs)}
-                className="px-4 py-2 rounded bg-purple-600 hover:bg-purple-700 font-semibold transition-colors duration-200"
+                title={showLogs ? 'Hide Logs' : 'Show Logs'}
+                 // Updated Button Styling: Neutral secondary style
+                className="flex items-center justify-center gap-2 px-4 py-2 rounded-full font-semibold transition-all duration-200 ease-in-out transform active:scale-95 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500 focus:ring-offset-gray-800 text-gray-400 hover:bg-gray-700/50 hover:text-gray-300"
               >
-                {showLogs ? 'Hide Logs' : 'Show Logs'}
+                <ListFilter size={18} />
+                {/* Text hidden on smaller screens, shown on md+ */}
+                <span className="hidden sm:inline">{showLogs ? 'Hide Logs' : 'Show Logs'}</span>
+              </button>
+
+              {/* --- Camera Switch Button (Conditional) --- */}
+              {hasMultipleCameras && (
+                <button
+                  onClick={switchCamera}
+                  title="Switch Camera"
+                  // Style similar to Logs button (neutral secondary)
+                  className="flex items-center justify-center gap-2 px-4 py-2 rounded-full font-semibold transition-all duration-200 ease-in-out transform active:scale-95 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500 focus:ring-offset-gray-800 text-gray-400 hover:bg-gray-700/50 hover:text-gray-300"
+                >
+                  <RefreshCw size={18} />
+                  <span className="hidden sm:inline">Switch Cam</span>
+                </button>
+              )}
+              {/* --------------------------------------- */}
+
+              {/* Leave Room Button */}
+              <button
+                onClick={handleLeaveRoom}
+                title="Leave Room"
+                // Updated Button Styling: Red accent, primary button style
+                className="flex items-center justify-center gap-2 px-4 py-2 rounded-full font-semibold transition-all duration-200 ease-in-out transform active:scale-95 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 focus:ring-offset-gray-800 border border-red-600 text-red-400 hover:bg-red-900/40 hover:text-red-300 hover:border-red-500"
+              >
+                <LogOut size={18} />
+                 {/* Text hidden on smaller screens, shown on md+ */}
+                 <span className="hidden sm:inline">Leave</span>
               </button>
 
               {/* --- Bitrate Slider Control --- */}
-              <div className="flex items-center gap-2 text-sm">
-                <label htmlFor="bitrateSlider" className="whitespace-nowrap">Max Bitrate:</label>
+              <div className="flex items-center gap-2 text-sm text-gray-400"> 
+                <label htmlFor="bitrateSlider" className="whitespace-nowrap">Bitrate:</label>
                 <input
                   type="range"
                   id="bitrateSlider"
@@ -848,16 +1007,16 @@ export default function Home() {
                   max={MAX_BITRATE_KBPS}
                   value={targetBitrateKbps}
                   onChange={handleBitrateChange}
-                  className="w-32 h-2 bg-gray-600 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                  className="w-24 h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-emerald-500"
                   aria-label="Maximum video bitrate"
                 />
-                <span className="w-16 text-right font-mono">{targetBitrateKbps} kbps</span>
+                <span className="w-16 text-right font-mono text-gray-300">{targetBitrateKbps} kbps</span>
               </div>
               {/* ----------------------------- */}
 
               {/* --- Resolution Slider Control --- */}
-              <div className="flex items-center gap-2 text-sm">
-                <label htmlFor="resolutionSlider" className="whitespace-nowrap">Resolution:</label>
+              <div className="flex items-center gap-2 text-sm text-gray-400">
+                <label htmlFor="resolutionSlider" className="whitespace-nowrap">Res:</label>
                 <input
                   type="range"
                   id="resolutionSlider"
@@ -866,15 +1025,15 @@ export default function Home() {
                   step={1}
                   value={currentResolutionIndex}
                   onChange={handleResolutionChange}
-                  className="w-24 h-2 bg-gray-600 rounded-lg appearance-none cursor-pointer accent-green-500"
+                  className="w-20 h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-emerald-500" 
                   aria-label="Video resolution"
                 />
-                <span className="w-12 text-right font-mono">{RESOLUTION_PRESETS[currentResolutionIndex]?.label || 'N/A'}</span>
+                <span className="w-12 text-right font-mono text-gray-300">{RESOLUTION_PRESETS[currentResolutionIndex]?.label || 'N/A'}</span>
               </div>
               {/* ------------------------------ */}
 
               {/* --- Frame Rate Slider Control --- */}
-              <div className="flex items-center gap-2 text-sm">
+              <div className="flex items-center gap-2 text-sm text-gray-400">
                 <label htmlFor="fpsSlider" className="whitespace-nowrap">FPS:</label>
                 <input
                   type="range"
@@ -884,16 +1043,16 @@ export default function Home() {
                   step={1}
                   value={currentFrameRateIndex}
                   onChange={handleFrameRateChange}
-                  className="w-20 h-2 bg-gray-600 rounded-lg appearance-none cursor-pointer accent-red-500"
+                  className="w-16 h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-emerald-500" 
                   aria-label="Video frame rate"
                 />
-                <span className="w-10 text-right font-mono">{FRAME_RATE_PRESETS[currentFrameRateIndex]}</span>
+                <span className="w-10 text-right font-mono text-gray-300">{FRAME_RATE_PRESETS[currentFrameRateIndex]}</span>
               </div>
               {/* ------------------------------ */}
 
               {/* --- Call Stats Display --- */}
               {callStats && (
-                <div className="text-xs text-gray-400 border-l border-gray-600 pl-3 ml-1 flex flex-col items-start">
+                <div className="text-xs text-gray-400 border-l border-gray-700 pl-3 ml-1 flex flex-col items-start">
                   <span>TX: {callStats.totalSent} | RX: {callStats.totalReceived}</span>
                   <span>Bitrate: {callStats.currentBitrate} | Loss: {callStats.packetLoss}</span>
                 </div>
@@ -902,13 +1061,15 @@ export default function Home() {
 
             </div>
 
-            {/* Log Window */} 
+            {/* Log Window - Uses updated LogWindow component styles */} 
             {showLogs && (
-              <LogWindow
-                logs={logs}
-                onClose={() => setShowLogs(false)}
-                onGetStats={logPeerStats}
-              />
+              <div className="px-4 pb-4"> {/* Add padding around log window */}
+                <LogWindow
+                  logs={logs}
+                  onClose={() => setShowLogs(false)}
+                  onGetStats={logPeerStats}
+                />
+              </div>
             )}
           </div>
         )}

@@ -39,29 +39,21 @@ const getWebSocketURL = (): string => {
       return 'ws://server-side-placeholder'; 
   }
 
-  // Local Development Check
-  if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-    const localPort = process.env.NEXT_PUBLIC_SIGNALING_PORT || 3001;
-    console.log(`WS URL (local): ws://localhost:${localPort}`);
-    return `ws://localhost:${localPort}`; 
-  }
+  // --- Always use the deployed URL from environment variable ---
+  const signalingUrl = process.env.NEXT_PUBLIC_SIGNALING_URL; // Use the variable from .env.local
 
-  // --- Deployed Environment Logic --- 
-  // Use the environment variable set during deployment (e.g., in Netlify)
-  const signalingServerUrl = process.env.NEXT_PUBLIC_SIGNALING_SERVER_URL;
-  
-  if (!signalingServerUrl) {
+  if (!signalingUrl) {
      console.error(
-       "CRITICAL: Environment variable NEXT_PUBLIC_SIGNALING_SERVER_URL is not defined! " +
-       "Ensure it is set in your deployment environment (e.g., Netlify site settings). " +
+       "CRITICAL: Environment variable NEXT_PUBLIC_SIGNALING_URL is not defined! " +
+       "Ensure it is set in your .env.local file or deployment environment. " +
        "Falling back to a non-functional URL."
      );
      // Return a non-functional placeholder to make the error obvious
-     return 'wss://error-signaling-url-not-set'; 
+     return 'wss://error-signaling-url-not-set';
   }
 
   // Ensure the URL uses the wss:// protocol for secure WebSocket connections
-  let wsUrl = signalingServerUrl;
+  let wsUrl = signalingUrl.trim(); // Trim whitespace just in case
   if (wsUrl.startsWith('https://')) {
     wsUrl = wsUrl.replace(/^https/, 'wss');
   } else if (wsUrl.startsWith('http://')) {
@@ -74,7 +66,7 @@ const getWebSocketURL = (): string => {
     wsUrl = `wss://${wsUrl}`;
   }
 
-  console.log(`WS URL (deployed): ${wsUrl}`);
+  console.log(`WS URL (forced): ${wsUrl}`); // Log that we are forcing this URL
   return wsUrl;
 };
 
