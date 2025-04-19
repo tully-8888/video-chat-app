@@ -2,6 +2,38 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import Peer, { Instance as PeerInstance, SignalData } from 'simple-peer';
 import { useWebSocket } from './useWebSocket'; // Assuming useWebSocket is in the same directory
 
+// --- STUN/TURN Server Configuration ---
+const peerConfig = {
+  iceServers: [
+    // --- Public STUN Servers ---
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun2.l.google.com:19302' },
+    { urls: 'stun:stun3.l.google.com:19302' },
+    { urls: 'stun:stun4.l.google.com:19302' },
+    { urls: 'stun:stun.services.mozilla.com' },
+    { urls: 'stun:stun.stunprotocol.org:3478' },
+    { urls: 'stun:stun.nextcloud.com:443' },
+    // Add more STUN if needed
+
+    // --- Open Relay Project TURN Server (Free Tier) ---
+    // Reference: https://www.metered.ca/tools/openrelay/
+    // IMPORTANT: Replace credentials below with environment variables 
+    // or fetch from a secure backend. DO NOT HARDCODE PRODUCTION CREDENTIALS.
+    {
+      urls: [
+        'turn:openrelay.metered.ca:80', 
+        'turn:openrelay.metered.ca:443',
+        'turns:openrelay.metered.ca:443' // Secure TURN
+      ],
+      username: 'c4f7ff87d1325979858e8571', 
+      credential: 'oP46m4ah5dOMj+7V',
+      credentialType: 'password', // Open Relay uses password auth for static creds
+    },
+    // -----------------------------------------------------
+  ],
+};
+
 interface PeerData {
   peerId: string;
   peer: PeerInstance;
@@ -28,21 +60,6 @@ interface UseWebRTCReturn {
   setVideoBitrate: (bitrate: number) => Promise<void>; // Add bitrate function
 }
 
-// Configuration for STUN servers (use public ones for now)
-const peerConfig = {
-  iceServers: [
-    { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' },
-    // Add more STUN servers if needed
-    // Consider adding TURN servers here if reliability over P2P is critical
-    // { 
-    //   urls: 'turn:your-turn-server.com:3478', 
-    //   username: 'your-username',
-    //   credential: 'your-password' 
-    // },
-  ],
-};
-
 export function useWebRTC({
   localStream,
   onRemoteStream,
@@ -50,7 +67,11 @@ export function useWebRTC({
 }: UseWebRTCOptions): UseWebRTCReturn {
   const [peers, setPeers] = useState<Map<string, PeerData>>(new Map());
   const [isJoined, setIsJoined] = useState(false);
-  const peersRef = useRef(peers); // Ref to access current peers in callbacks
+  // --- Removed state for dynamic STUN servers ---
+  // const [iceServers, setIceServers] = useState<RTCIceServer[]>(DEFAULT_STUN_SERVERS);
+  // const [isLoadingStunList, setIsLoadingStunList] = useState(true);
+  // -------------------------------------
+  const peersRef = useRef(peers);
   const roomIdRef = useRef<string | null>(null);
   const userIdRef = useRef<string | null>(null);
 
@@ -63,6 +84,10 @@ export function useWebRTC({
   const stableOnRemoteStream = useCallback(onRemoteStream || (() => {}), [onRemoteStream]);
   const stableOnPeerDisconnect = useCallback(onPeerDisconnect || (() => {}), [onPeerDisconnect]);
 
+  // --- Removed Effect to fetch dynamic STUN server list --- 
+  // useEffect(() => { ... }, []);
+  // ----------------------------------------------------
+
   // --- Peer Management Functions (defined before use in handleWebSocketMessage) ---
   const createPeer = useCallback((peerId: string, initiator: boolean) => {
     if (!localStream || !userIdRef.current) {
@@ -74,19 +99,16 @@ export function useWebRTC({
       return;
     }
 
-    console.log(`Creating peer connection to ${peerId}, initiator: ${initiator}`);
-    // Need sendMessage from useWebSocket, but useWebSocket is defined later.
-    // This creates a dependency cycle issue. We need to rethink the structure slightly.
-    // Option 1: Pass sendMessage into createPeer (might get messy).
-    // Option 2: Define sendMessage earlier (requires separating useWebSocket logic).
-    // Option 3: Use refs for callbacks that need sendMessage.
-
-    // Let's try getting sendMessage from a ref updated AFTER useWebSocket is called.
+    // Retrieve sendMessage function from ref
     const webSocketSendMessage = wsSendMessageRef.current;
     if (!webSocketSendMessage) {
       console.error('sendMessage function not available when creating peer');
       return;
     }
+
+    // --- Use static peerConfig defined above ---
+    console.log(`Creating peer connection to ${peerId}, initiator: ${initiator}, using static config with ${peerConfig.iceServers.length} ICE servers.`);
+    // ---------------------------------------------
 
     const newPeer = new Peer({ initiator, config: peerConfig, stream: localStream });
 
@@ -132,7 +154,7 @@ export function useWebRTC({
       return updatedPeers;
     });
 
-  }, [localStream, stableOnRemoteStream]); // Removed userId dependency, will use ref
+  }, [localStream, stableOnRemoteStream]); // Removed iceServers/isLoading dependencies
 
   const removePeer = useCallback((peerId: string) => {
     setPeers(prevPeers => {

@@ -29,6 +29,21 @@ interface UseWebSocketReturn {
   connectionState: WebSocketState;
 }
 
+// Use the correctly named environment variable set in Netlify
+const signalingUrl = process.env.NEXT_PUBLIC_SIGNALING_SERVER_URL; 
+
+if (!signalingUrl) {
+  // Update the error message to reflect the correct variable name
+  console.error(
+    "CRITICAL: Environment variable NEXT_PUBLIC_SIGNALING_SERVER_URL is not defined! " +
+    "Ensure it is set in your .env.local file or deployment environment. " +
+    "Falling back to a non-functional URL."
+  );
+}
+
+// Fallback URL if the environment variable is not set
+const WS_URL = signalingUrl || 'wss://error-signaling-url-not-set';
+
 // Determine WebSocket URL based on environment
 const getWebSocketURL = (): string => {
   // Check if running in a browser environment first
@@ -39,21 +54,10 @@ const getWebSocketURL = (): string => {
       return 'ws://server-side-placeholder'; 
   }
 
-  // --- Always use the deployed URL from environment variable ---
-  const signalingUrl = process.env.NEXT_PUBLIC_SIGNALING_URL; // Use the variable from .env.local
-
-  if (!signalingUrl) {
-     console.error(
-       "CRITICAL: Environment variable NEXT_PUBLIC_SIGNALING_URL is not defined! " +
-       "Ensure it is set in your .env.local file or deployment environment. " +
-       "Falling back to a non-functional URL."
-     );
-     // Return a non-functional placeholder to make the error obvious
-     return 'wss://error-signaling-url-not-set';
-  }
-
+  // --- Use the WS_URL constant defined above ---
+  let wsUrl = WS_URL.trim(); // Trim whitespace just in case
+  
   // Ensure the URL uses the wss:// protocol for secure WebSocket connections
-  let wsUrl = signalingUrl.trim(); // Trim whitespace just in case
   if (wsUrl.startsWith('https://')) {
     wsUrl = wsUrl.replace(/^https/, 'wss');
   } else if (wsUrl.startsWith('http://')) {
