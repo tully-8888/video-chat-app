@@ -17,10 +17,13 @@
     "@types/simple-peer": "^9.11.8",
     "@types/uuid": "^10.0.0",
     "event-source-polyfill": "^1.0.31",
+    "lucide-react": "^0.501.0",
     "next": "15.2.4",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "react-toastify": "^11.0.5",
     "simple-peer": "^9.11.1",
+    "use-debounce": "^10.0.4",
     "uuid": "^11.1.0",
     "ws": "^8.18.1"
   },
