@@ -32,6 +32,9 @@ const peerConfig = {
     },
     // -----------------------------------------------------
   ],
+  // --- Force TURN relay for testing --- 
+  iceTransportPolicy: 'relay', 
+  // ------------------------------------
 };
 
 interface PeerData {
