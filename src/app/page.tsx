@@ -5,6 +5,10 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useDebouncedCallback } from 'use-debounce'; // Import debounce hook
 import { useWebRTC } from './hooks/useWebRTC';
 import type { Instance as PeerInstance } from 'simple-peer'; // Import PeerInstance type
+import { v4 as uuidv4 } from 'uuid'; // Import UUID for generating room IDs
+import { Video, Keyboard } from 'lucide-react'; // Import icons
+import { ToastContainer, toast } from 'react-toastify'; // Import react-toastify
+import 'react-toastify/dist/ReactToastify.css'; // Import default CSS
 
 // Simple Video Player Component
 const VideoPlayer = ({ stream, muted = false, className = '' }: { stream: MediaStream | null, muted?: boolean, className?: string }) => {
@@ -67,6 +71,7 @@ export default function Home() {
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isJoining, setIsJoining] = useState(false); // Prevent multiple join attempts
+  const [isCreatingRoom, setIsCreatingRoom] = useState(false); // New state for "New meeting" button
   const [remoteStreams, setRemoteStreams] = useState<Map<string, MediaStream>>(new Map());
   const [isMicMuted, setIsMicMuted] = useState(false);
   const [isVideoStopped, setIsVideoStopped] = useState(false);
@@ -76,7 +81,10 @@ export default function Home() {
   const [showLogs, setShowLogs] = useState(false); // State to control log window visibility
   // -----------------------
 
-  // New state for call statistics
+  // Ref to track previous WebSocket state for transition detection
+  const previousWebSocketStateRef = useRef<string | null>(null);
+
+  // --- Call Statistics State ---
   const [callStats, setCallStats] = useState<{
     totalSent: string;
     totalReceived: string;
@@ -308,60 +316,107 @@ export default function Home() {
 
     // Cleanup function: stop tracks if component unmounts unexpectedly
     // Use a ref to the stream for reliable cleanup
-    const streamRef = { current: localStream }; 
+    const streamRef = { current: localStream };
     return () => {
       console.log('Cleaning up local stream on unmount/re-render');
       streamRef.current?.getTracks().forEach(track => track.stop());
     }
   // localStream dependency ensures ref is updated if stream changes
   // userId dependency ensures effect runs if userId changes externally
-  }, [userId, localStream]); 
+  }, [userId, localStream]);
 
-  const handleJoinRoom = async () => { // Make async
-    if (!roomId.trim() || !userId.trim()) {
-      setError('Please enter both Room ID and User ID.');
+  // --- Refactored Join Logic ---
+  const initiateJoin = useCallback(async (targetRoomId: string) => {
+    if (!targetRoomId.trim()) {
+      setError('Room ID cannot be empty.');
       return;
     }
-    if (webSocketState !== 'OPEN') {
-      setError('Cannot join room: Not connected to signaling server.');
-      return;
-    }
+    // Simplified check: If not OPEN, just show message, button disabled state handles prevention
+    // if (webSocketState !== 'OPEN') {
+    //   setError('Cannot join room: Not connected to signaling server.');
+    //   return;
+    // }
     if (isJoining || isJoined) {
       console.warn('Already joining or joined.');
       return;
     }
 
     setError(null);
-    setIsJoining(true); 
+    setIsJoining(true); // Indicate joining process started
+
+    // Ensure userId is set (it should be by useEffect, but double-check)
+    let currentUserId = userId;
+    if (!currentUserId) {
+        currentUserId = `user_${Math.random().toString(36).substring(2, 9)}`;
+        setUserId(currentUserId);
+        console.log("Generated userId on demand:", currentUserId);
+    }
 
     try {
-        console.log('Attempting to get media before joining...');
-        const stream = await getMedia(); // Await media access HERE
-        
-        if (!stream) { 
-             // Should be caught by getMedia's throw, but double-check
-             throw new Error('Media stream not available after request.');
-        }
+      console.log('Attempting to get media before joining...');
+      const stream = await getMedia(); // Await media access
 
-        // If media acquired, proceed to join
-        console.log(`Media acquired, calling rtcJoinRoom for room: ${roomId}, user: ${userId}`);
-        // Call the join function from the hook, passing roomId and userId
-        // The hook uses the `localStream` state variable which `getMedia` updated.
-        rtcJoinRoom({ roomId, userId });
-        // `isJoined` state from the hook will eventually set isJoining to false
+      if (!stream) {
+        // This case should be handled by getMedia throwing an error
+         throw new Error('Media stream not available after request.');
+      }
+
+      // Set the roomId state just before joining (important for UI consistency if joining existing)
+      setRoomId(targetRoomId);
+
+      console.log(`Media acquired, calling rtcJoinRoom for room: ${targetRoomId}, user: ${currentUserId}`);
+      rtcJoinRoom({ roomId: targetRoomId, userId: currentUserId });
+      // isJoining will be set to false by the useEffect watching isJoined
 
     } catch (err) {
-        console.error('Failed to join room (likely media error):', err);
-        // setError should have been set within getMedia
-        if (!error) { // Set a generic error if getMedia didn't
-             setError('Failed to join room. Could not access camera/microphone.');
-        }
-        setIsJoining(false); // Stop joining attempt on error
+      console.error(`Failed to join room ${targetRoomId}:`, err);
+       // Error should be set within getMedia, but set a fallback
+       if (!error) {
+           const errorMessage = err instanceof Error ? err.message : String(err);
+           // Use the error state for user feedback
+           setError(`Failed to join room: ${errorMessage}. Check permissions?`);
+       }
+      setIsJoining(false); // Stop joining attempt on error
+      setIsCreatingRoom(false); // Reset creation state if it was a new meeting
     }
-  };
+  // Added missing dependencies like setError, error
+  }, [userId, webSocketState, isJoining, isJoined, getMedia, rtcJoinRoom, setRoomId, setError, error, setUserId /* Added setUserId */]);
+
+  // --- New Meeting Handler ---
+  const handleNewMeeting = useCallback(async () => {
+     // Check websocket state *before* proceeding
+     if (webSocketState !== 'OPEN') {
+         setError("Cannot start meeting: Connection issue. Please wait.");
+         console.warn("New meeting blocked: WebSocket not open.");
+         return;
+     }
+    if (isJoining || isCreatingRoom) return; // Prevent double clicks
+
+    setIsCreatingRoom(true); // Indicate creation process started
+    setIsJoining(true); // Also set isJoining true immediately for consistent UI disabling
+    const newRoomId = uuidv4().substring(0, 8); // Generate a random room ID
+    console.log(`Generated new Room ID: ${newRoomId}`);
+    await initiateJoin(newRoomId);
+    // On failure, states are reset in initiateJoin's catch block
+    // On success, isJoining becomes false via useEffect hook, setIsCreatingRoom(false) might be needed if initiateJoin succeeds but isJoined takes time? Let's reset it for safety if initiateJoin returns successfully (although it doesn't return anything now)
+    // Let's rely on the flow: initiateJoin sets isJoining. useEffect sets it false when isJoined becomes true. We only need to reset isCreatingRoom on failure.
+  }, [webSocketState, isJoining, isCreatingRoom, initiateJoin, setError /* Added setError */]);
+
+  // --- Join Existing Room Handler (using roomId from state) ---
+  const handleJoinExistingRoom = useCallback(async () => {
+     // Check websocket state *before* proceeding
+     if (webSocketState !== 'OPEN') {
+         setError("Cannot join meeting: Connection issue. Please wait.");
+         console.warn("Join meeting blocked: WebSocket not open.");
+         return;
+     }
+    if (isJoining || !roomId.trim()) return; // Prevent joining if already joining or no room ID
+    // No need for isCreatingRoom check here
+    await initiateJoin(roomId);
+  }, [webSocketState, isJoining, roomId, initiateJoin, setError /* Added setError */]);
 
   // Remove the separate proceedToJoin function, logic is now in handleJoinRoom
-  // const proceedToJoin = () => { ... }; 
+  // const proceedToJoin = () => { ... };
 
   const handleLeaveRoom = () => {
     rtcLeaveRoom();
@@ -579,21 +634,61 @@ export default function Home() {
       videoHeight = 'h-[calc(100vh-4rem)]';
   }
 
-  return (
-    <div className="min-h-screen bg-gray-900 text-white flex flex-col">
-      <header className="bg-gray-800 p-4 shadow-md flex justify-between items-center">
-        <h1 className="text-2xl font-bold">P2P Video Chat</h1>
-        {isJoined && (
-          <div className="text-sm text-gray-400">
-            Room: {roomId} | User: {userId} | WS: {webSocketState}
-          </div>
-        )}
-      </header>
+  const isLoading = isJoining || isCreatingRoom; // Combined loading state
+  const isConnecting = webSocketState !== 'OPEN' && webSocketState !== 'CLOSED'; // WebSocket trying to connect
 
+  // --- Effect to show errors as toasts --- 
+  useEffect(() => {
+    if (error) {
+      toast.error(error, { toastId: `error-${error.substring(0, 20)}` }); // Add toastId to prevent duplicates on re-renders
+      // Clear the error state after showing the toast so it doesn't re-trigger
+      // if the component re-renders for other reasons.
+      setError(null);
+    }
+  }, [error]); // Dependency array ensures this runs only when error state changes
+
+  // --- Effect to show specific WebSocket connection failure toast --- 
+  useEffect(() => {
+    // Check for transition *to* CLOSED state specifically when not already joined/joining
+    if (
+      previousWebSocketStateRef.current !== 'CLOSED' &&
+      webSocketState === 'CLOSED' &&
+      !isJoining &&
+      !isCreatingRoom &&
+      !isJoined
+    ) {
+      // Use a specific toastId to prevent duplicates if state changes rapidly
+      toast.error("Connection failed. Please check internet or try again.", { toastId: 'ws-conn-failed' }); 
+    }
+    // Update the ref *after* the check
+    previousWebSocketStateRef.current = webSocketState;
+  }, [webSocketState, isJoining, isCreatingRoom, isJoined]); // Rerun when these states change
+
+  return (
+    // Apply dark theme universally when not joined
+    <div className={`min-h-screen flex flex-col ${!isJoined ? 'bg-gray-950 text-gray-200' : 'bg-gray-900 text-white'}`}> 
+      {/* Toast Container added here - configure appearance */}
+      <ToastContainer
+        position="bottom-right"
+        autoClose={5000} // Close after 5 seconds
+        hideProgressBar={false}
+        newestOnTop={false}
+        closeOnClick
+        rtl={false}
+        pauseOnFocusLoss
+        draggable
+        pauseOnHover
+        theme="dark" // Use dark theme to match UI
+      />
+
+      {/* <header> block removed */}
+
+      {/* Use main tag consistently */}
       <main className="flex-grow p-4 flex flex-col">
-        {error && (
+        {/* Error display div removed - handled by toast notifications */}
+        {/* {error && (
           <div
-            className="bg-red-800 border border-red-600 text-red-100 px-4 py-3 rounded relative mb-4 shadow-lg"
+            className={`border px-4 py-3 rounded relative mb-4 shadow-lg ${!isJoined ? 'bg-red-900/30 border-red-700 text-red-300' : 'bg-red-800 border-red-600 text-red-100'}`}
             role="alert"
           >
             <strong className="font-bold">Error: </strong>
@@ -606,46 +701,90 @@ export default function Home() {
               &times;
             </button>
           </div>
-        )}
+        )} */}
 
         {!isJoined ? (
-          // --- Join Form ---
-          <div className="flex-grow flex items-center justify-center">
-            <div className="bg-gray-800 p-8 rounded-lg shadow-xl w-full max-w-md">
-              <h2 className="text-xl mb-6 text-center">Join Room</h2>
-              <input
-                type="text"
-                placeholder="Room ID"
-                value={roomId}
-                onChange={(e) => setRoomId(e.target.value.trim())}
-                className="w-full p-3 mb-4 bg-gray-700 rounded border border-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                disabled={isJoining}
-              />
-              <input
-                type="text"
-                placeholder="User ID (auto-generated if blank)"
-                value={userId}
-                onChange={(e) => setUserId(e.target.value.trim())}
-                className="w-full p-3 mb-4 bg-gray-700 rounded border border-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                disabled={isJoining}
-              />
+          // --- Dark Theme Join UI ---
+          <div className="flex-grow flex flex-col items-center justify-center text-center px-4">
+            {/* Title */}
+            <h1 className="text-4xl sm:text-5xl text-gray-100 font-semibold mb-3"> {/* Light text, changed font-normal to font-semibold */}
+              Connect with friends, instantly.
+            </h1>
+            {/* Subtitle */}
+            <p className="text-base sm:text-lg text-gray-400 mb-10 sm:mb-12 max-w-xl"> {/* Lighter secondary text */}
+              Simple, secure P2P video calls powered by WebRTC. No servers involved in media transmission.
+            </p>
+
+            {/* Actions Container */}
+            <div className="flex flex-col sm:flex-row items-center gap-3 sm:gap-4">
+              {/* New Meeting Button (Dark Theme) */}
               <button
-                onClick={handleJoinRoom}
-                disabled={!roomId.trim() || webSocketState !== 'OPEN' || isJoining}
-                className={`w-full p-3 rounded font-semibold transition-colors duration-200 ${isJoining || webSocketState !== 'OPEN' || !roomId.trim()
-                    ? 'bg-gray-600 cursor-not-allowed'
-                    : 'bg-blue-600 hover:bg-blue-700'
-                  }`}
+                onClick={handleNewMeeting}
+                disabled={isConnecting || isLoading}
+                className={`flex items-center justify-center gap-2 px-5 py-3 rounded-full font-semibold transition-all duration-200 ease-in-out transform border focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500 focus:ring-offset-gray-950 ${ /* Changed rounded-md to rounded-full */
+                  isConnecting || isLoading
+                    ? 'bg-gray-700 border-gray-600 text-gray-500 cursor-not-allowed' // Dark disabled state
+                    : 'bg-gray-900 border-emerald-600 text-emerald-400 hover:bg-emerald-900/40 hover:text-emerald-300 hover:border-emerald-500 active:scale-95' // Dark theme button styles
+                }`}
               >
-                {isJoining ? 'Joining...' : (webSocketState !== 'OPEN' ? `Connecting (${webSocketState})...` : 'Join Room')}
+                <Video size={20} /> {/* Icon color inherited via text */}
+                {isCreatingRoom ? 'Starting...' : 'New meeting'}
               </button>
+
+              {/* Join Existing Meeting Input Group (Dark Theme) */}
+              <div className="flex items-center w-full sm:w-auto">
+                <div className="relative flex-grow">
+                   <span className="absolute inset-y-0 left-0 flex items-center pl-3">
+                      {/* Icon color matches placeholder */}
+                      <Keyboard size={20} className="text-gray-500" /> 
+                    </span>
+                    <input
+                      type="text"
+                      placeholder="Enter a code"
+                      value={roomId}
+                      onChange={(e) => setRoomId(e.target.value.trim().toLowerCase())}
+                       // Dark theme input styles
+                      className="w-full sm:w-64 pl-10 pr-4 py-3 border border-gray-700 rounded-xl bg-gray-900 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-gray-100 placeholder-gray-500 transition duration-150 ease-in-out" // Changed rounded-md to rounded-xl
+                      disabled={isConnecting || isLoading}
+                      onKeyDown={(e) => { if (e.key === 'Enter' && roomId.trim()) handleJoinExistingRoom(); }}
+                    />
+                </div>
+                {/* Separate Join button (Dark Theme) */}
+                 <button
+                    onClick={handleJoinExistingRoom}
+                    disabled={!roomId.trim() || isConnecting || isLoading}
+                     // Dark theme secondary button, changed font-medium to font-semibold
+                    className={`ml-2 px-4 py-3 rounded-full font-semibold transition-colors duration-200 ease-in-out active:scale-95 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500 focus:ring-offset-gray-950 ${ /* Changed rounded-md to rounded-full */
+                      !roomId.trim() || isConnecting || isLoading
+                        ? 'text-gray-600 cursor-not-allowed' // Dark disabled
+                        : 'text-emerald-500 hover:bg-emerald-500/10 hover:text-emerald-400' // Dark hover
+                    } sm:ml-3`}
+                 >
+                    Join
+                 </button>
+              </div>
             </div>
+
+             {/* Loading/Connecting Indicator (Dark Theme) */}
+             {(isLoading || isConnecting) && (
+               <p className="mt-6 text-sm text-gray-400 animate-pulse"> {/* Adjusted text color */}
+                 {isCreatingRoom ? 'Starting your meeting...' : (isJoining ? 'Joining meeting...' : 'Connecting to service...')}
+               </p>
+             )}
+            {/* WebSocket connection error <p> tag removed - handled by toast */}
+            {/* {webSocketState === 'CLOSED' && !error && !isJoining && (
+                 <p className="mt-6 text-sm text-red-500/80"> 
+                     Connection failed. Please check your internet or try again later.
+                 </p>
+             )} */}
+
           </div>
+          // --- End Dark Theme Join UI ---
         ) : (
-          // --- In Call UI ---
-          <div className="flex-grow flex flex-col">
+          // --- In Call UI (Original Dark Theme) ---
+          <div className="flex-grow flex flex-col bg-gray-900 text-white">
             {/* --- Video Grid --- */}
-            <div className={`flex-grow grid gap-4 ${gridCols} ${gridRows} content-start overflow-hidden mb-4`}>
+            <div className={`flex-grow grid gap-4 ${gridCols} ${gridRows} content-start overflow-hidden mb-4 p-4`}>
               {/* Local Video */}
               <div className={`relative bg-black rounded-lg overflow-hidden shadow-lg ${localVideoSpan} ${videoHeight}`}>
                 <VideoPlayer stream={localStream} muted={true} className="w-full h-full" />
