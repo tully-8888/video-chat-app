@@ -61,7 +61,7 @@ const QUALITY_PRESETS = [
 
 export default function Home() {
   // const [roomId, setRoomId] = useState(''); // No longer needed for input, set during join
-  const [currentJoinedRoomId, setCurrentJoinedRoomId] = useState(''); // Track the *actual* joined room
+  // const [currentJoinedRoomId, setCurrentJoinedRoomId] = useState(''); // Track the *actual* joined room - COMMENTED OUT FOR BUILD
   const [userId, setUserId] = useState('');
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -379,7 +379,7 @@ export default function Home() {
       }
 
       // setRoomId(targetRoomId); // Set the actual joined room ID state
-      setCurrentJoinedRoomId(targetRoomId);
+      // setCurrentJoinedRoomId(targetRoomId); // COMMENTED OUT FOR BUILD
       console.log(`Media acquired, calling rtcJoinRoom for room: ${targetRoomId}, user: ${currentUserId}`);
       rtcJoinRoom({ roomId: targetRoomId, userId: currentUserId });
 
@@ -430,7 +430,7 @@ export default function Home() {
     localStream?.getTracks().forEach(track => track.stop());
     setLocalStream(null);
     setCallStats(null);
-    setCurrentJoinedRoomId(''); // Clear joined room ID on leave
+    // setCurrentJoinedRoomId(''); // Clear joined room ID on leave - COMMENTED OUT FOR BUILD
   };
   
   useEffect(() => {
