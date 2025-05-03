@@ -2,6 +2,9 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import Peer, { Instance as PeerInstance, SignalData } from 'simple-peer';
 import { useWebSocket } from './useWebSocket'; // Assuming useWebSocket is in the same directory
 
+// Define missing WebRTC types if needed
+type RTCIceTransportPolicy = 'all' | 'relay';
+
 // --- STUN/TURN Server Configuration ---
 const peerConfig = {
   iceServers: [
@@ -33,7 +36,7 @@ const peerConfig = {
     // -----------------------------------------------------
   ],
   // --- Force TURN relay for testing --- 
-  iceTransportPolicy: 'relay', 
+  iceTransportPolicy: 'relay' as RTCIceTransportPolicy, 
   // ------------------------------------
 };
 
@@ -84,8 +87,17 @@ export function useWebRTC({
   }, [peers]);
 
   // Stable callbacks for simple-peer events
-  const stableOnRemoteStream = useCallback(onRemoteStream || (() => {}), [onRemoteStream]);
-  const stableOnPeerDisconnect = useCallback(onPeerDisconnect || (() => {}), [onPeerDisconnect]);
+  const stableOnRemoteStream = useCallback((peerId: string, stream: MediaStream) => {
+    if (onRemoteStream) {
+      onRemoteStream(peerId, stream);
+    }
+  }, [onRemoteStream]);
+  
+  const stableOnPeerDisconnect = useCallback((peerId: string) => {
+    if (onPeerDisconnect) {
+      onPeerDisconnect(peerId);
+    }
+  }, [onPeerDisconnect]);
 
   // --- Removed Effect to fetch dynamic STUN server list --- 
   // useEffect(() => { ... }, []);

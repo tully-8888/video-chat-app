@@ -22,6 +22,43 @@ import {
 import { ToastContainer, toast } from 'react-toastify'; // Import react-toastify
 import 'react-toastify/dist/ReactToastify.css'; // Import default CSS
 
+// Define missing media types if not available
+interface ConstrainULong {
+  ideal?: number;
+  exact?: number;
+  min?: number;
+  max?: number;
+}
+
+interface ConstrainDouble {
+  ideal?: number;
+  exact?: number;
+  min?: number;
+  max?: number;
+}
+
+interface ConstrainDOMString {
+  ideal?: string;
+  exact?: string;
+}
+
+// Define MediaTrackConstraints with its own properties
+interface MediaTrackConstraints {
+  width?: ConstrainULong;
+  height?: ConstrainULong;
+  frameRate?: ConstrainDouble;
+  deviceId?: ConstrainDOMString;
+  // Using Record instead of index signature with 'any'
+  [key: string]: ConstrainULong | ConstrainDouble | ConstrainDOMString | undefined;
+}
+
+interface MediaStreamConstraints {
+  audio?: boolean | MediaTrackConstraints;
+  video?: boolean | MediaTrackConstraints;
+  // Using Record instead of index signature with 'any'
+  [key: string]: boolean | MediaTrackConstraints | undefined;
+}
+
 // --- Resolution Presets ---
 type ResolutionPreset = {
   label: string;
@@ -336,7 +373,7 @@ export default function Home() {
     };
 
     enumerateAndSet();
-  }, [localStream]);
+  }, [localStream, currentVideoDeviceId]);
 
   useEffect(() => {
     // This effect handles re-acquiring media when the selected camera device changes.
@@ -351,7 +388,6 @@ export default function Home() {
         });
       }
     }
-    // Add currentVideoDeviceId to the dependency array as it's used in the effect's logic.
   }, [localStream, hasMultipleCameras, getMedia, currentVideoDeviceId]);
 
   const initiateJoin = useCallback(async (targetRoomId: string) => {
