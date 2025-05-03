@@ -60,6 +60,7 @@ interface UseWebRTCReturn {
   isJoined: boolean;
   webSocketState: string; // Expose WS state for UI feedback
   setVideoBitrate: (bitrate: number) => Promise<void>; // Add bitrate function
+  replaceVideoTrack: (newTrack: MediaStreamTrack) => void; // Add video track replacement function
 }
 
 export function useWebRTC({
@@ -244,6 +245,125 @@ export function useWebRTC({
   const stableOnWebSocketOpen = useCallback(() => { /* TODO: Implement */ }, []);
   const stableOnWebSocketClose = useCallback(() => { /* TODO: Implement */ }, []);
 
+  // Add a new function to handle video track replacement for all peers
+  const replaceVideoTrack = useCallback((newTrack: MediaStreamTrack) => {
+    console.log(`Replacing video track in all peer connections with track ID: ${newTrack.id}`);
+    
+    // Store track settings for debugging
+    const trackSettings = newTrack.getSettings();
+    console.log(`New track settings: ${JSON.stringify(trackSettings)}`);
+    
+    // Ensure track is enabled
+    if (!newTrack.enabled) {
+      console.warn('New track is disabled, enabling it');
+      newTrack.enabled = true;
+    }
+
+    // Check if we have peers to update
+    if (peersRef.current.size === 0) {
+      console.log('No peer connections to update');
+      return;
+    }
+
+    // Reference to track successful peer updates
+    const updatedPeers = new Set<string>();
+    
+    // For each peer connection, replace the video track
+    peersRef.current.forEach((peerData, peerId) => {
+      try {
+        // Get the underlying Peer instance
+        const peer = peerData.peer;
+        
+        // In simple-peer, we need to access the internal RTCPeerConnection
+        if (!(peer as PeerInstance & { _pc?: RTCPeerConnection })._pc) {
+          console.error(`Peer ${peerId} does not have an internal RTCPeerConnection`);
+          return;
+        }
+        
+        // Get the RTCPeerConnection
+        const pc = (peer as PeerInstance & { _pc: RTCPeerConnection })._pc;
+        
+        // Find all video senders
+        const senders = pc.getSenders();
+        const videoSenders = senders.filter(sender => 
+          sender.track && sender.track.kind === 'video'
+        );
+        
+        if (videoSenders.length === 0) {
+          console.warn(`No video senders found for peer ${peerId}`);
+          return;
+        }
+        
+        // Clone the track to avoid any potential issues when reusing across connections
+        const trackClone = newTrack.clone();
+        
+        // Replace track in each sender
+        let replaced = false;
+        for (const sender of videoSenders) {
+          console.log(`Replacing track in sender ${sender.track?.id} for peer ${peerId}`);
+          
+          // Replace track
+          sender.replaceTrack(trackClone)
+            .then(() => {
+              console.log(`Successfully replaced track for peer ${peerId}`);
+              updatedPeers.add(peerId);
+              replaced = true;
+            })
+            .catch(err => {
+              console.error(`Failed to replace track for peer ${peerId}:`, err);
+              
+              // Fall back to recreating the peer connection
+              console.log(`Attempting to recreate peer connection with ${peerId}`);
+              try {
+                // Destroy old peer
+                peer.destroy();
+                
+                // Remove from peers map
+                setPeers(prevPeers => {
+                  const updated = new Map(prevPeers);
+                  updated.delete(peerId);
+                  return updated;
+                });
+                
+                // Access the sendMessage function
+                const sendMessage = wsSendMessageRef.current;
+                if (sendMessage && userIdRef.current) {
+                  // Force reconnection via signaling
+                  sendMessage({
+                    type: 'reconnect_request', 
+                    payload: { 
+                      targetId: peerId,
+                      userId: userIdRef.current
+                    }
+                  });
+                }
+              } catch (recreateErr) {
+                console.error(`Failed to recreate peer ${peerId}:`, recreateErr);
+              }
+            });
+        }
+        
+        if (!replaced) {
+          console.warn(`Unable to replace track for peer ${peerId}, no successful replacements`);
+        }
+        
+      } catch (error) {
+        console.error(`Error updating peer ${peerId}:`, error);
+      }
+    });
+    
+    // Check if all peers were updated after a timeout
+    setTimeout(() => {
+      console.log(`Track replacement complete. Updated ${updatedPeers.size}/${peersRef.current.size} peers`);
+      if (updatedPeers.size < peersRef.current.size) {
+        const failedPeers = Array.from(peersRef.current.keys())
+          .filter(id => !updatedPeers.has(id));
+        console.warn(`Failed to update peers: ${failedPeers.join(', ')}`);
+      }
+    }, 2000);
+    
+  }, [setPeers]);
+
   // --- WebSocket Handling ---
   const handleWebSocketMessage = useCallback((message: { type: string; payload: unknown }) => {
     console.log('WebRTC hook received WS message:', message);
@@ -337,6 +457,26 @@ export function useWebRTC({
         const errorMessage = data?.message || 'Unknown server error';
         console.error("Received error from signaling server:", errorMessage);
         // Handle server errors appropriately (e.g., display message to user)
+        break;
+      }
+      case 'reconnect_request': {
+        const data = payload as { userId: string, targetId: string };
+        if (data && typeof data.userId === 'string' && typeof data.targetId === 'string') {
+          const { userId: reconnectingPeerId, targetId } = data;
+          
+          // Only handle if we are the target and the sender is not ourselves
+          if (currentUserId && targetId === currentUserId && reconnectingPeerId !== currentUserId) {
+            console.log(`Received reconnection request from ${reconnectingPeerId}`);
+            
+            // Remove existing peer if present
+            if (peersRef.current.has(reconnectingPeerId)) {
+              remover(reconnectingPeerId);
+            }
+            
+            // Create a new peer with the reconnecting user
+            creator(reconnectingPeerId, true);
+          }
+        }
         break;
       }
       default:
@@ -445,16 +585,16 @@ export function useWebRTC({
         } else {
           // Modify the existing encoding's maxBitrate
           parameters.encodings[0].maxBitrate = bitrate;
-           console.log(`Peer ${peerData.peerId}: Setting encoding[0].maxBitrate to ${bitrate}.`);
+           console.log(`Peer ${peerData.peerId}: Modified existing encoding's maxBitrate to ${bitrate / 1000} kbps.`);
         }
 
         await videoSender.setParameters(parameters);
-        console.log(`Peer ${peerData.peerId}: Successfully set maxBitrate to ${bitrate}.`);
+        console.log(`Peer ${peerData.peerId}: Successfully set video bitrate to ${bitrate / 1000} kbps.`);
       } catch (error) {
-        console.error(`Peer ${peerData.peerId}: Failed to set video bitrate to ${bitrate}:`, error);
+        console.error(`Peer ${peerData.peerId}: Failed to set video bitrate:`, error);
       }
     }
-  }, []); // No dependencies, relies on peersRef
+  }, []);
 
   return {
     peers,
@@ -463,5 +603,6 @@ export function useWebRTC({
     isJoined,
     webSocketState,
     setVideoBitrate,
+    replaceVideoTrack,
   };
-} 
+}

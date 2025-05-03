@@ -189,7 +189,8 @@ export default function Home() {
     isJoined,
     webSocketState,
     peers,
-    setVideoBitrate
+    setVideoBitrate,
+    replaceVideoTrack
   } = useWebRTC({
     localStream,
     onRemoteStream: handleRemoteStream,
@@ -506,9 +507,38 @@ export default function Home() {
     const nextDeviceId = videoDevices[nextDeviceIndex]?.deviceId;
 
     if (nextDeviceId && nextDeviceId !== currentVideoDeviceId) {
+      console.log(`Switching camera from device ${currentVideoDeviceId} to ${nextDeviceId}`);
+      
+      // Store new device ID first, so getMedia uses it
       setCurrentVideoDeviceId(nextDeviceId);
+      
+      // Get media with new camera
+      getMedia(true, true).then(newStream => {
+        console.log(`New camera stream acquired with ID: ${newStream.id}`);
+        
+        // Get the new video track
+        const newVideoTrack = newStream.getVideoTracks()[0];
+        if (!newVideoTrack) {
+          console.error('No video track found in new stream after camera switch');
+          return;
+        }
+        
+        // Log track details for debugging
+        console.log(`New video track: ID=${newVideoTrack.id}, Enabled=${newVideoTrack.enabled}, Muted=${newVideoTrack.muted}`);
+        
+        // If we're in a call, use the dedicated replaceVideoTrack function to update all peer connections
+        if (isJoined && replaceVideoTrack) {
+          console.log(`Replacing video track in ${peers.size} peer connections`);
+          replaceVideoTrack(newVideoTrack);
+        }
+      }).catch(err => {
+        console.error("Error switching camera device:", err);
+        setError(`Failed to switch camera: ${err.message}`);
+        // Revert to previous device ID if failed
+        setCurrentVideoDeviceId(currentVideoDeviceId);
+      });
     }
-  }, [hasMultipleCameras, videoDevices, currentVideoDeviceId]);
+  }, [hasMultipleCameras, videoDevices, currentVideoDeviceId, getMedia, isJoined, peers, setError, replaceVideoTrack]);
 
   const logPeerStats = useCallback(async () => {
     if (!isJoined || peers.size === 0) {
