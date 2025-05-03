@@ -2,7 +2,6 @@
 
 import React from 'react';
 
-// Type definitions (consider moving these to a shared types file if used elsewhere)
 export type ResolutionPreset = {
     label: string;
     width: number;

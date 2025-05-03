@@ -2,9 +2,6 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import Peer, { Instance as PeerInstance, SignalData } from 'simple-peer';
 import { useWebSocket } from './useWebSocket'; // Assuming useWebSocket is in the same directory
 
-// Define missing WebRTC types if needed
-type RTCIceTransportPolicy = 'all' | 'relay';
-
 // --- STUN/TURN Server Configuration ---
 const peerConfig = {
   iceServers: [
@@ -35,9 +32,8 @@ const peerConfig = {
     },
     // -----------------------------------------------------
   ],
-  // --- Force TURN relay for testing --- 
-  iceTransportPolicy: 'relay' as RTCIceTransportPolicy, 
-  // ------------------------------------
+  // Don't force relay - allow direct connections when possible
+  // iceTransportPolicy: 'relay' as RTCIceTransportPolicy,
 };
 
 interface PeerData {
@@ -109,6 +105,17 @@ export function useWebRTC({
       console.error('Cannot create peer: Missing localStream or current userId');
       return;
     }
+    
+    // Debug logging for localStream
+    const videoTracks = localStream.getVideoTracks();
+    const audioTracks = localStream.getAudioTracks();
+    console.log(`LocalStream debug - Video tracks: ${videoTracks.length}, Audio tracks: ${audioTracks.length}`);
+    if (videoTracks.length > 0) {
+      const videoSettings = videoTracks[0].getSettings();
+      console.log(`Video track settings: ${JSON.stringify(videoSettings)}`);
+      console.log(`Video track enabled: ${videoTracks[0].enabled}, muted: ${videoTracks[0].muted}`);
+    }
+    
     if (peersRef.current.has(peerId)) {
       console.warn(`Peer already exists for ${peerId}, skipping creation.`);
       return;
@@ -122,19 +129,45 @@ export function useWebRTC({
     }
 
     // --- Use static peerConfig defined above ---
-    console.log(`Creating peer connection to ${peerId}, initiator: ${initiator}, using static config with ${peerConfig.iceServers.length} ICE servers.`);
+    console.log(`Creating peer connection to ${peerId}, initiator: ${initiator}, using config with ${peerConfig.iceServers.length} ICE servers.`);
     // ---------------------------------------------
 
-    const newPeer = new Peer({ initiator, config: peerConfig, stream: localStream });
+    // Create new peer with trickle explicitly set to true to ensure ICE candidates flow continuously
+    const newPeer = new Peer({ 
+      initiator, 
+      config: peerConfig, 
+      stream: localStream,
+      trickle: true,
+      // Set to true to allow connections behind symetric NATs (most mobile networks)
+      sdpTransform: (sdp) => {
+        console.log(`Transforming SDP for peer ${peerId}`);
+        return sdp;
+      }
+    });
 
     newPeer.on('signal', (signalData: SignalData) => {
       // Log the type of signal being sent
       console.log(`[${userIdRef.current?.substring(0, 6)}] Sending signal (${signalData.type || 'candidate'}) to ${peerId.substring(0, 6)}`);
+      
+      // Enhanced debugging for signal data
+      if (signalData.type === 'offer' || signalData.type === 'answer') {
+        console.log(`SDP ${signalData.type} contains video codecs: ${signalData.sdp?.includes('video')}`);
+      }
+      
       webSocketSendMessage({ type: 'signal', payload: { receiverId: peerId, signalData } });
     });
 
     newPeer.on('stream', (remoteStream: MediaStream) => {
-      console.log(`[${userIdRef.current?.substring(0, 6)}] Received stream from ${peerId.substring(0, 6)}`);
+      const videoTrackCount = remoteStream.getVideoTracks().length;
+      const audioTrackCount = remoteStream.getAudioTracks().length;
+      
+      console.log(`[${userIdRef.current?.substring(0, 6)}] Received stream from ${peerId.substring(0, 6)}: Video tracks: ${videoTrackCount}, Audio tracks: ${audioTrackCount}`);
+      
+      // Verify tracks are enabled
+      remoteStream.getVideoTracks().forEach((track, i) => {
+        console.log(`Remote video track ${i} enabled: ${track.enabled}, muted: ${track.muted}`);
+      });
+      
       setPeers(prevPeers => {
         const updatedPeers = new Map(prevPeers);
         updatedPeers.set(peerId, { peerId, peer: newPeer, stream: remoteStream });

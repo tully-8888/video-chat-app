@@ -22,10 +22,9 @@ export const VideoGrid = ({
     const participantCount = remoteStreams.size + 1;
     let gridCols = 'grid-cols-1';
     let gridRows = 'grid-rows-1';
-    const videoHeightClass = 'h-full'; // Keep consistent height for now
+    const videoHeightClass = 'h-full';
     const aspectRatioClass = 'aspect-video';
-    
-    // Determine grid layout based on participant count
+
     if (participantCount === 1) {
         gridCols = 'grid-cols-1';
         gridRows = 'grid-rows-1';
@@ -41,9 +40,9 @@ export const VideoGrid = ({
     } else if (participantCount >= 7 && participantCount <= 9) {
         gridCols = 'grid-cols-3';
         gridRows = 'grid-rows-3';
-    } else { // 10 or more participants
+    } else { 
         gridCols = 'grid-cols-4';
-        gridRows = 'grid-rows-auto'; // Allow rows to adjust
+        gridRows = 'grid-rows-auto';
     }
 
     return (
